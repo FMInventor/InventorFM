@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Smart Pantry Pro</title>
+  <meta name="theme-color" content="#4f46e5">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ═════════ LOGIN ═════════ -->
+<section id="login-view" class="login-wrap" hidden>
+  <form id="login-form" class="card login-card">
+    <div class="brand-icon big"><i data-lucide="refrigerator"></i></div>
+    <h1>Smart Pantry Pro</h1>
+    <p class="muted">Accedi per vedere la tua dispensa</p>
+    <label>Email<input type="email" id="login-email" required autocomplete="email"></label>
+    <label>Password<input type="password" id="login-pass" required minlength="6" autocomplete="current-password"></label>
+    <button class="btn btn-dark full" type="submit" id="login-btn">Accedi</button>
+    <button class="btn btn-ghost full" type="button" id="signup-btn">Crea account (primo accesso)</button>
+    <p id="login-msg" class="login-msg"></p>
+  </form>
+</section>
+
+<!-- ═════════ APP ═════════ -->
+<div id="app-view" hidden>
+  <div id="demo-banner" class="demo-banner" hidden>
+    Modalità demo: i dati restano solo in questo browser. Configura <code>config.js</code> per usare Supabase.
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-icon"><i data-lucide="refrigerator"></i></div>
+      <div>
+        <div class="brand-title">Smart Pantry Pro</div>
+        <div class="brand-sub">Multi-scadenza, Storico Radar &amp; Backup Cloud/File</div>
+      </div>
+    </div>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="pantry"><i data-lucide="package"></i>Dispensa</button>
+      <button class="tab" data-tab="shopping"><i data-lucide="shopping-cart"></i>Lista della Spesa <span id="shop-badge" class="badge">0</span></button>
+    </nav>
+
+    <div class="actions">
+      <button class="btn btn-light" id="btn-backup"><i data-lucide="download"></i><span>Salva Backup</span></button>
+      <button class="btn btn-light" id="btn-restore"><i data-lucide="upload"></i><span>Ripristina</span></button>
+      <button class="btn btn-green" id="btn-text"><i data-lucide="clipboard-list"></i><span>Spesa Testo</span></button>
+      <button class="btn btn-purple" id="btn-recipes"><i data-lucide="sparkles"></i><span>Ricette</span></button>
+      <button class="btn btn-icon" id="btn-logout" title="Esci" hidden><i data-lucide="log-out"></i></button>
+      <input type="file" id="restore-file" accept="application/json,.json" hidden>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Statistiche -->
+    <section class="stats">
+      <div class="card stat"><div class="stat-ic ic-blue"><i data-lucide="layers"></i></div>
+        <div><div class="stat-label">Prodotti (lotti)</div><div class="stat-val" id="st-products">0</div></div></div>
+      <div class="card stat"><div class="stat-ic ic-amber"><i data-lucide="clock"></i></div>
+        <div><div class="stat-label">In scadenza (≤3gg)</div><div class="stat-val amber" id="st-soon">0</div></div></div>
+      <div class="card stat"><div class="stat-ic ic-red"><i data-lucide="triangle-alert"></i></div>
+        <div><div class="stat-label">Lotti scaduti</div><div class="stat-val red" id="st-expired">0</div></div></div>
+      <div class="card stat"><div class="stat-ic ic-green"><i data-lucide="trending-up"></i></div>
+        <div><div class="stat-label">Usati (sett. scelta)</div><div class="stat-val green" id="st-used">0</div></div></div>
+    </section>
+
+    <!-- ── TAB DISPENSA ── -->
+    <section id="tab-pantry" class="grid">
+      <div class="col">
+        <form id="add-form" class="card pad">
+          <h2><i data-lucide="circle-plus" class="h-ic"></i>Aggiungi Prodotto o Nuovo Lotto</h2>
+          <p class="sub">Se il prodotto esiste già, verrà aggiunta la nuova scadenza!</p>
+
+          <label>Nome Prodotto *
+            <input id="f-name" list="product-names" required placeholder="Es. Latte, Uova, Pollo..." autocomplete="off">
+            <datalist id="product-names"></datalist>
+          </label>
+          <div class="row2">
+            <label>Quantità *<input id="f-qty" type="number" min="0.01" step="any" value="1" required></label>
+            <label>Unità<select id="f-unit"></select></label>
+          </div>
+          <div class="row2">
+            <label>Categoria *<select id="f-cat"></select></label>
+            <label>Data di Scadenza <span id="exp-star">*</span><input id="f-exp" type="date"></label>
+          </div>
+          <label class="check"><input type="checkbox" id="f-noexp"> Nessuna scadenza (es. strumenti)</label>
+          <button class="btn btn-dark full" type="submit"><i data-lucide="save"></i>Salva / Aggiungi Scadenza</button>
+        </form>
+
+        <div class="card pad">
+          <div class="card-head">
+            <div>
+              <h2><i data-lucide="radar" class="h-ic"></i>Storico Radar Categorie Cibo</h2>
+              <p class="sub">Ogni lunedì inizia una nuova settimana; le precedenti restano in archivio</p>
+            </div>
+            <button class="link-btn" id="btn-reset-history"><i data-lucide="rotate-ccw"></i>Azzera</button>
+          </div>
+          <div class="week-nav">
+            <button class="arrow" id="week-prev" aria-label="Settimana precedente">◀</button>
+            <select id="week-select"></select>
+            <button class="arrow" id="week-next" aria-label="Settimana successiva">▶</button>
+          </div>
+          <div class="radar-box"><canvas id="radar"></canvas></div>
+        </div>
+      </div>
+
+      <div class="card pad inv">
+        <div class="card-head wrap">
+          <div>
+            <h2><i data-lucide="calendar-clock" class="h-ic"></i>Inventario per Data di Scadenza</h2>
+            <p class="sub">Ordinati automaticamente per scadenza più vicina</p>
+          </div>
+          <div class="filters">
+            <input id="search" type="search" placeholder="Cerca prodotto...">
+            <select id="cat-filter"></select>
+          </div>
+        </div>
+        <div id="inventory" class="inv-list"></div>
+      </div>
+    </section>
+
+    <!-- ── TAB LISTA SPESA ── -->
+    <section id="tab-shopping" hidden>
+      <div class="card pad shop">
+        <h2><i data-lucide="shopping-cart" class="h-ic"></i>Lista della Spesa</h2>
+        <p class="sub">I prodotti finiti vengono aggiunti in automatico; quando li ricompri e li inserisci in dispensa spariscono da qui.</p>
+        <form id="shop-form" class="shop-form">
+          <input id="shop-name" required placeholder="Cosa devi comprare?" autocomplete="off">
+          <input id="shop-note" placeholder="Note (es. 2 conf.)" autocomplete="off">
+          <button class="btn btn-dark" type="submit"><i data-lucide="plus"></i>Aggiungi</button>
+        </form>
+        <ul id="shop-list" class="shop-list"></ul>
+        <div class="shop-foot">
+          <button class="link-btn" id="shop-clear-done"><i data-lucide="trash-2"></i>Rimuovi completati</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="modal-root"></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
