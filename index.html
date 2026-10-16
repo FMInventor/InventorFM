@@ -11,7 +11,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 
@@ -37,6 +37,7 @@
 
 <!-- ═════════ APP ═════════ -->
 <div id="app-view" hidden>
+  <div id="offline-banner" class="offline-banner" hidden></div>
   <div id="demo-banner" class="demo-banner" hidden>
     Modalità demo: i dati restano solo in questo browser. Configura <code>config.js</code> per usare Supabase.
   </div>
@@ -53,6 +54,7 @@
     <nav class="tabs" role="tablist">
       <button class="tab active" data-tab="pantry"><i data-lucide="package"></i>Dispensa</button>
       <button class="tab" data-tab="shopping"><i data-lucide="shopping-cart"></i>Lista della Spesa <span class="badge shop-badge">0</span></button>
+      <button class="tab" data-tab="menu"><i data-lucide="utensils"></i>Menù</button>
       <button class="tab" data-tab="mother"><i data-lucide="heart"></i>Mother</button>
     </nav>
 
@@ -60,7 +62,7 @@
       <button class="btn btn-light" id="btn-backup" title="Scarica un file con tutti i dati"><i data-lucide="download"></i><span>Salva Backup</span></button>
       <button class="btn btn-light" id="btn-restore" title="Ricarica i dati da un file di backup"><i data-lucide="upload"></i><span>Ripristina</span></button>
       <button class="btn btn-green" id="btn-text" title="Copia la lista della spesa come testo"><i data-lucide="clipboard-list"></i><span>Spesa Testo</span></button>
-      <button class="btn btn-purple" id="btn-recipes" title="Prompt per Gemini con gli ingredienti"><i data-lucide="sparkles"></i><span>Ricette</span></button>
+      <button class="btn btn-purple" id="btn-recipes" title="Menù settimanale con Gemini usando i prodotti in scadenza"><i data-lucide="chef-hat"></i><span>Cosa Cucino</span></button>
       <button class="btn btn-icon" id="btn-notify" title="Notifiche scadenze"><i data-lucide="bell-off"></i></button>
       <button class="btn btn-icon" id="btn-logout" title="Esci" hidden><i data-lucide="log-out"></i></button>
       <button class="btn btn-icon" id="btn-menu" title="Menu" aria-label="Menu"><i data-lucide="menu"></i></button>
@@ -94,9 +96,10 @@
             <input id="f-name" list="product-names" required placeholder="Es. Latte, Uova, Pollo..." autocomplete="off">
             <datalist id="product-names"></datalist>
           </label>
-          <div class="row2">
+          <div class="row3">
             <label>Quantità *<input id="f-qty" type="number" min="0.01" step="any" value="1" required inputmode="decimal"></label>
             <label>Unità<select id="f-unit"></select></label>
+            <label title="Facoltativa: sotto questa quantità il prodotto va da solo in lista spesa">Scorta minima<input id="f-min" type="number" min="0" step="any" placeholder="—" inputmode="decimal"></label>
           </div>
           <label>Categorie * <span class="hint">(puoi sceglierne più di una, es. Surgelati + Carne e Pesce)</span></label>
           <div class="chips" id="f-cats"></div>
@@ -168,6 +171,29 @@
       </div>
     </section>
 
+    <!-- ── TAB MENÙ ── -->
+    <section id="tab-menu" hidden>
+      <div class="card pad menu-card">
+        <div class="card-head wrap">
+          <div>
+            <h2><i data-lucide="utensils" class="h-ic"></i>Menù della settimana</h2>
+            <p class="sub">Premi <b>Cosa cucino?</b>: preparo il testo per Gemini con i prodotti che scadono prima. Poi incolla qui la risposta.</p>
+          </div>
+          <div class="menu-btns">
+            <button class="btn btn-purple" id="menu-cook"><i data-lucide="chef-hat"></i>Cosa cucino?</button>
+            <button class="btn btn-light" id="menu-paste"><i data-lucide="clipboard-paste"></i>Incolla menù</button>
+          </div>
+        </div>
+        <select id="menu-history" aria-label="Menù salvati" hidden></select>
+        <div id="menu-view"></div>
+        <div class="menu-actions" id="menu-actions" hidden>
+          <button class="link-btn" id="menu-edit"><i data-lucide="pencil"></i>Modifica</button>
+          <button class="link-btn" id="menu-copy"><i data-lucide="copy"></i>Copia</button>
+          <button class="link-btn del-btn" id="menu-del"><i data-lucide="trash-2"></i>Elimina</button>
+        </div>
+      </div>
+    </section>
+
     <!-- ── TAB MOTHER ── -->
     <section id="tab-mother" hidden>
       <div class="mother-share card pad">
@@ -191,6 +217,7 @@
   <nav class="bottom-nav">
     <button class="bnav active" data-tab="pantry"><i data-lucide="package"></i><span>Dispensa</span></button>
     <button class="bnav" data-tab="shopping"><i data-lucide="shopping-cart"></i><span>Spesa</span><span class="badge shop-badge">0</span></button>
+    <button class="bnav" data-tab="menu"><i data-lucide="utensils"></i><span>Menù</span></button>
     <button class="bnav" data-tab="mother"><i data-lucide="heart"></i><span>Mother</span></button>
   </nav>
 </div>
@@ -202,6 +229,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/lucide@0.460.0/dist/umd/lucide.min.js"></script>
-<script src="app.js?v=4"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

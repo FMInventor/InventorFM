@@ -27,8 +27,11 @@ const UNITS = [
 ];
 const RED_DAYS = 2;     // entro 2 giorni → rosso
 const ORANGE_DAYS = 5;  // entro 5 giorni → arancione
-const TABLES = ['products', 'lots', 'usage_log', 'shopping'];
+const TABLES = ['products', 'lots', 'usage_log', 'shopping', 'menus'];
+const CORE_TABLES = ['products', 'lots', 'usage_log', 'shopping'];
+const emptyData = () => ({ products: [], lots: [], usage_log: [], shopping: [], menus: [] });
 const GROUPS = [
+  { key: 'out',     title: 'Finiti (sotto scorta minima)' },
   { key: 'expired', title: 'Scaduti' },
   { key: 'red',     title: `Entro ${RED_DAYS} giorni` },
   { key: 'orange',  title: `Entro ${ORANGE_DAYS} giorni` },
@@ -96,7 +99,7 @@ function makeSupabaseStore(sb) {
     async updateMany(t, ids, patch) { if (ids.length) ok(await sb.from(t).update(patch).in('id', ids)); },
     async clear(t) { ok(await sb.from(t).delete().not('id', 'is', null)); },
     async replaceAll(nd) {
-      for (const t of ['lots', 'usage_log', 'shopping', 'products']) await this.clear(t);
+      for (const t of ['lots', 'usage_log', 'shopping', 'menus', 'products']) await this.clear(t);
       for (const t of TABLES) {
         const rows = (nd[t] || []).map(({ user_id, ...r }) => r);
         for (let i = 0; i < rows.length; i += 500) ok(await sb.from(t).insert(rows.slice(i, i + 500)));
@@ -119,7 +122,7 @@ function makeSupabaseStore(sb) {
 
 function makeLocalStore() {
   const KEY = 'smart-pantry-demo-v1';
-  const empty = () => ({ products: [], lots: [], usage_log: [], shopping: [] });
+  const empty = emptyData;
   let d = { ...empty(), ...lsGet(KEY, {}) };
   const save = () => lsSet(KEY, d);
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
@@ -146,10 +149,125 @@ function makeLocalStore() {
   };
 }
 
+/* ═════════════ Archivio offline ═════════════
+   Avvolge Supabase: tiene una copia dei dati sul dispositivo e, se manca la
+   connessione, applica le modifiche in locale e le mette in coda. Appena torna
+   internet la coda viene inviata nell'ordine giusto. */
+const OFF_CACHE = 'sp-offline-cache-v1';
+const OFF_QUEUE = 'sp-offline-queue-v1';
+const isNetErr = e => !navigator.onLine || /Failed to fetch|NetworkError|Load failed|fetch failed|ERR_INTERNET|network/i.test((e && (e.message || e.details)) || String(e));
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
+  : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
+
+function applyLocal(d, [kind, t, a, b]) {
+  d[t] = d[t] || [];
+  if (kind === 'insert') { if (!d[t].some(x => x.id === a.id)) d[t].push({ ...a }); }
+  else if (kind === 'update') { const r = d[t].find(x => x.id === a); if (r) Object.assign(r, b); }
+  else if (kind === 'updateMany') { const ids = new Set(a); d[t].forEach(x => { if (ids.has(x.id)) Object.assign(x, b); }); }
+  else if (kind === 'remove') { d[t] = d[t].filter(x => x.id !== a); if (t === 'products') d.lots = d.lots.filter(l => l.product_id !== a); }
+  else if (kind === 'removeMany') { const ids = new Set(a); d[t] = d[t].filter(x => !ids.has(x.id)); }
+  else if (kind === 'clear') { d[t] = []; if (t === 'products') d.lots = []; }
+}
+
+function makeOfflineStore(remote) {
+  let cache = { ...emptyData(), ...lsGet(OFF_CACHE, {}) };
+  let queue = lsGet(OFF_QUEUE, []);
+  let flushing = null;
+  const saveC = () => lsSet(OFF_CACHE, cache);
+  const saveQ = () => { lsSet(OFF_QUEUE, queue); updateOfflineBanner(); };
+  const clone = o => JSON.parse(JSON.stringify(o));
+  const send = ([kind, t, a, b]) => {
+    if (kind === 'insert') return remote.insert(t, a);
+    if (kind === 'update') return remote.update(t, a, b);
+    if (kind === 'updateMany') return remote.updateMany(t, a, b);
+    if (kind === 'remove') return remote.remove(t, a);
+    if (kind === 'removeMany') return remote.removeMany(t, a);
+    if (kind === 'clear') return remote.clear(t);
+  };
+  async function run(op) {
+    applyLocal(cache, op); saveC();
+    if (queue.length || !navigator.onLine) { queue.push(op); saveQ(); return; }
+    try { await send(op); }
+    catch (e) { if (isNetErr(e)) { queue.push(op); saveQ(); } else throw e; }
+  }
+  async function flush() {
+    if (flushing) return flushing;
+    flushing = (async () => {
+      while (queue.length && navigator.onLine) {
+        try { await send(queue[0]); }
+        catch (e) {
+          if (isNetErr(e)) break;
+          console.warn('Modifica offline scartata', queue[0], e); // es. già salvata
+        }
+        queue.shift(); saveQ();
+      }
+    })();
+    try { await flushing; } finally { flushing = null; }
+  }
+  return {
+    kind: 'supabase',
+    pending: () => queue.length,
+    flush,
+    async loadAll() {
+      if (navigator.onLine) {
+        try {
+          await flush();
+          const d = await remote.loadAll();
+          if (!queue.length) { cache = { ...emptyData(), ...d }; saveC(); }
+        } catch (e) { if (!isNetErr(e)) throw e; }
+      }
+      return clone(cache);
+    },
+    async insert(t, row) {
+      const now = new Date().toISOString();
+      const r = { id: uuid(), created_at: now, ...row };
+      if (t === 'usage_log' && !r.used_at) r.used_at = now;
+      if (t === 'shopping') { r.done = !!r.done; r.selected = !!r.selected; r.in_mother = !!r.in_mother; }
+      await run(['insert', t, r]);
+      return { ...r };
+    },
+    async update(t, id, patch) {
+      await run(['update', t, id, patch]);
+      const r = (cache[t] || []).find(x => x.id === id);
+      return r ? { ...r } : { id, ...patch };
+    },
+    updateMany: (t, ids, patch) => ids.length ? run(['updateMany', t, ids, patch]) : undefined,
+    remove: (t, id) => run(['remove', t, id]),
+    removeMany: (t, ids) => ids.length ? run(['removeMany', t, ids]) : undefined,
+    clear: t => run(['clear', t]),
+    async replaceAll(nd) {
+      if (!navigator.onLine) throw new Error('Serve la connessione a internet per ripristinare un backup.');
+      await flush();
+      await remote.replaceAll(nd);
+      cache = { ...emptyData(), ...(await remote.loadAll()) }; saveC();
+    },
+    getShareToken: () => remote.getShareToken(),
+    resetShareToken: () => remote.resetShareToken(),
+    reset() { cache = emptyData(); queue = []; saveC(); saveQ(); },
+  };
+}
+
+function updateOfflineBanner() {
+  const b = $('#offline-banner');
+  if (!b) return;
+  const n = store && store.pending ? store.pending() : 0;
+  const off = !navigator.onLine;
+  b.hidden = !off && !n;
+  b.className = 'offline-banner' + (off ? '' : ' syncing');
+  b.textContent = off
+    ? `Sei offline: puoi continuare a usare l'app${n ? ` · ${n} modific${n === 1 ? 'a' : 'he'} in attesa` : ''}. Si sincronizza da sola al ritorno della connessione.`
+    : `Sincronizzazione di ${n} modific${n === 1 ? 'a' : 'he'} fatte offline…`;
+}
+window.addEventListener('online', async () => {
+  updateOfflineBanner();
+  if (appShown && store && store.flush) { await store.flush(); await refresh(); toast('Connessione tornata: dati sincronizzati ✅'); }
+});
+window.addEventListener('offline', updateOfflineBanner);
+
 /* ═════════════ Stato ═════════════ */
 let store = null;
 let sb = null;
-let data = { products: [], lots: [], usage_log: [], shopping: [] };
+let data = emptyData();
 const ui = { tab: lsGet('sp-tab', 'pantry'), q: '', cat: '', week: isoDay(weekStart(new Date())) };
 let chart = null;
 let appShown = false;
@@ -183,12 +301,12 @@ async function init() {
 
   if (hasSupabase) {
     sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_KEY);
-    store = makeSupabaseStore(sb);
+    store = makeOfflineStore(makeSupabaseStore(sb));
     $('#btn-logout').hidden = false;
     const { data: { session } } = await sb.auth.getSession();
     session ? showApp() : showLogin();
     sb.auth.onAuthStateChange((evt, s) => {
-      if (evt === 'SIGNED_OUT') showLogin();
+      if (evt === 'SIGNED_OUT') { store.reset(); showLogin(); }
       else if (s && !appShown) showApp();
     });
   } else {
@@ -214,6 +332,7 @@ async function showApp() {
   $('#login-view').hidden = true;
   $('#app-view').hidden = false;
   setTab(ui.tab);
+  updateOfflineBanner();
   await refresh();
   startLive();
 }
@@ -308,16 +427,20 @@ function quickSave(t, id, patch) {
 const productByName = name => data.products.find(x => norm(x.name) === norm(name));
 
 /* Aggiunge al magazzino (crea il prodotto o un nuovo lotto) */
-async function addToInventory({ name, qty, unit, categories, expiry, frozen_at }) {
+async function addToInventory({ name, qty, unit, categories, expiry, frozen_at, min_qty }) {
   let p = productByName(name);
   let note = '';
   categories = categories && categories.length ? categories : ['Altro'];
-  if (!p) p = await store.insert('products', { name, category: categories[0], categories, unit });
-  else {
+  if (!p) {
+    const row = { name, category: categories[0], categories, unit };
+    if (min_qty > 0) row.min_qty = min_qty;
+    p = await store.insert('products', row);
+  } else {
     if (p.unit !== unit) note = ` (unità mantenuta: ${p.unit})`;
-    if (catsOf(p).join('|') !== categories.join('|')) {
-      p = await store.update('products', p.id, { category: categories[0], categories });
-    }
+    const patch = {};
+    if (catsOf(p).join('|') !== categories.join('|')) Object.assign(patch, { category: categories[0], categories });
+    if (min_qty > 0 && Number(p.min_qty) !== min_qty) patch.min_qty = min_qty;
+    if (Object.keys(patch).length) p = await store.update('products', p.id, patch);
   }
   if (!categories.includes(FROZEN)) frozen_at = null;
   const same = data.lots.find(l => l.product_id === p.id && (l.expiry || null) === (expiry || null)
@@ -335,6 +458,25 @@ async function addToShopping({ name, qty, unit, category }) {
     return store.update('shopping', ex.id, { qty: q, unit: unit || ex.unit, category: ex.category || category });
   }
   return store.insert('shopping', { name, qty: qty || null, unit: unit || null, category: category || null, done: false });
+}
+
+/* Scorta minima: se in casa ce n'è meno del minimo, la differenza va in lista spesa */
+const minOf = p => Number(p && p.min_qty) > 0 ? Number(p.min_qty) : 0;
+const totalOf = pid => round2(data.lots.filter(l => l.product_id === pid).reduce((a, l) => a + Number(l.qty), 0));
+async function ensureMinStock(pid) {
+  data = await store.loadAll(); // dati aggiornati dopo le modifiche appena fatte
+  const p = data.products.find(x => x.id === pid);
+  const min = minOf(p);
+  if (!min) return false;
+  const need = round2(min - totalOf(pid));
+  if (need <= 0) return false;
+  const item = data.shopping.find(s => !s.done && norm(s.name) === norm(p.name) && (!s.unit || s.unit === p.unit));
+  if (!item) {
+    await store.insert('shopping', { name: p.name, qty: need, unit: p.unit, category: catsOf(p)[0], note: 'Scorta minima', done: false });
+    return true;
+  }
+  if (!(Number(item.qty) >= need)) { await store.update('shopping', item.id, { qty: need, unit: p.unit }); return true; }
+  return false;
 }
 
 /* Dopo un acquisto: scala la quantità comprata dalla lista della spesa */
@@ -361,6 +503,7 @@ function render() {
   renderInventory();
   renderWeeks();
   renderShopping();
+  renderMenu();
   renderMother($('#mother-app-list'), data.shopping.filter(x => x.in_mother), {
     updatedAt: new Date(),
     emptyText: 'Nessuna lista ancora. Vai su <b>Lista della Spesa</b>, seleziona i prodotti con la casella e premi <b>Genera lista Mother</b>.',
@@ -398,12 +541,12 @@ function renderInventory() {
   const box = $('#inventory');
   const items = data.products
     .map(p => ({ p, lots: lotsOf(p.id) }))
-    .filter(x => x.lots.length)
+    .filter(x => x.lots.length || minOf(x.p))
     .filter(x => !ui.q || norm(x.p.name).includes(norm(ui.q)))
     .filter(x => !ui.cat || catsOf(x.p).includes(ui.cat))
-    .map(x => ({ ...x, st: lotStatus(x.lots[0]) }))
+    .map(x => ({ ...x, st: x.lots.length ? lotStatus(x.lots[0]) : { key: 'out' } }))
     .sort((a, b) => {
-      const ea = a.lots[0].expiry, eb = b.lots[0].expiry;
+      const ea = a.lots[0]?.expiry, eb = b.lots[0]?.expiry;
       if (!ea && !eb) return a.p.name.localeCompare(b.p.name);
       if (!ea) return 1; if (!eb) return -1;
       return ea.localeCompare(eb) || a.p.name.localeCompare(b.p.name);
@@ -434,12 +577,31 @@ function frozenInfo(l) {
 function productCard({ p, lots, st }) {
   const tot = round2(lots.reduce((s, l) => s + Number(l.qty), 0));
   const cats = catsOf(p);
+  const min = minOf(p);
+  const minChip = min ? `<span class="min-chip ${tot < min ? 'low' : ''}" title="Scorta minima">${tot < min ? 'Sotto scorta · ' : ''}min ${fmtQty(min)} ${esc(p.unit)}</span>` : '';
+  if (!lots.length) {
+    return `<article class="prod g-out">
+      <div class="prod-head">
+        <div class="prod-title">${catIcon(cats[0])}
+          <div><div class="prod-name">${esc(p.name)} ${minChip}</div><div class="prod-cat">${cats.map(esc).join(' · ')}</div></div>
+        </div>
+        <div class="prod-actions">
+          <button class="link-btn edit-btn" data-edit="${p.id}" aria-label="Modifica"><i data-lucide="pencil"></i><span>Modifica</span></button>
+          <button class="link-btn del-btn" data-del="${p.id}" title="Elimina prodotto" aria-label="Elimina"><i data-lucide="x"></i></button>
+        </div>
+      </div>
+      <div class="lots"><div class="lot st-out">
+        <div>Finito · <b>è nella lista della spesa</b></div>
+        <div class="lot-right"><button class="btn btn-light" data-readd="${esc(p.name)}"><i data-lucide="plus"></i>Ricomprato</button></div>
+      </div></div>
+    </article>`;
+  }
   return `<article class="prod g-${st.key}">
     <div class="prod-head">
       <div class="prod-title">
         ${catIcon(cats[0])}
         <div>
-          <div class="prod-name">${esc(p.name)} <span class="tot">Tot: ${fmtQty(tot)} ${esc(p.unit)}</span></div>
+          <div class="prod-name">${esc(p.name)} <span class="tot">Tot: ${fmtQty(tot)} ${esc(p.unit)}</span>${minChip}</div>
           <div class="prod-cat">${cats.map(esc).join(' · ')}</div>
         </div>
       </div>
@@ -602,19 +764,46 @@ function renderMother(target, items, { updatedAt, error, emptyText } = {}) {
 async function startMotherPage(token) {
   document.title = 'Lista della spesa';
   document.body.classList.add('mother-mode');
+  registerSW();
   $('#mother-page').hidden = false;
   const box = $('#mother-page-list');
-  let items = [];
+  // Copia locale + coda delle spunte: funziona anche senza campo al supermercato
+  const CK = 'sp-mother-cache-' + token, QK = 'sp-mother-queue-' + token;
+  const cached = lsGet(CK, null);
+  let items = cached ? cached.items : [];
+  let last = cached ? new Date(cached.at) : null;
+  let queue = lsGet(QK, []);
   let error = '';
-  let last = null;
-  let pending = 0;
-  const draw = () => { renderMother(box, items, { updatedAt: last, error }); icons(); };
-
+  let busyM = false;
+  const save = () => { lsSet(CK, { items, at: last ? last.toISOString() : null }); lsSet(QK, queue); };
+  const draw = () => {
+    const off = !navigator.onLine || error;
+    renderMother(box, items, {
+      updatedAt: last,
+      error: off ? (queue.length ? `Sei senza connessione: le tue spunte (${queue.length}) verranno salvate appena torna internet.` : 'Sei senza connessione: vedi l\'ultima lista scaricata.') : '',
+    });
+    icons();
+  };
+  const flush = async () => {
+    while (queue.length) {
+      const q = queue[0];
+      const { error: er } = await sb.rpc('mother_toggle', { p_token: token, p_id: q.id, p_done: q.done });
+      if (er) { if (isNetErr(er)) throw er; console.warn(er); }
+      queue.shift(); save();
+    }
+  };
   const load = async () => {
-    if (pending) return; // non sovrascrivere un tocco appena fatto
-    const { data: rows, error: e } = await sb.rpc('mother_list', { p_token: token });
-    if (e) { error = 'Non riesco ad aggiornare la lista. Controlla la connessione.'; console.error(e); }
-    else { items = rows || []; error = ''; last = new Date(); }
+    if (busyM) return;
+    busyM = true;
+    try {
+      await flush();
+      const { data: rows, error: e } = await sb.rpc('mother_list', { p_token: token });
+      if (e) throw e;
+      items = rows || []; error = ''; last = new Date(); save();
+    } catch (e) {
+      console.warn(e);
+      error = 'offline';
+    } finally { busyM = false; }
     draw();
   };
 
@@ -624,19 +813,21 @@ async function startMotherPage(token) {
     const it = items.find(s => s.id === b.dataset.mToggle);
     if (!it) return;
     it.done = !it.done;
-    draw();
-    pending++;
-    const { error: er } = await sb.rpc('mother_toggle', { p_token: token, p_id: it.id, p_done: it.done });
-    pending--;
-    if (er) { it.done = !it.done; error = 'Modifica non salvata, riprova.'; draw(); }
+    queue = queue.filter(q => q.id !== it.id);
+    queue.push({ id: it.id, done: it.done });
+    save(); draw();
+    load();
   });
 
-  renderMother(box, [], { updatedAt: null });
-  box.querySelector('.m-sub').textContent = 'Carico la lista…';
+  if (!cached) {
+    renderMother(box, [], { updatedAt: null });
+    box.querySelector('.m-sub').textContent = 'Carico la lista…';
+  } else draw();
   await load();
-  if (!last && !error) error = 'Link non valido.';
   setInterval(() => { if (!document.hidden) load(); }, 8000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+  window.addEventListener('online', load);
+  window.addEventListener('offline', draw);
 }
 
 async function onMotherShare() {
@@ -681,18 +872,21 @@ async function onAdd(e) {
   const noExp = $('#f-noexp').checked;
   const expiry = noExp ? null : ($('#f-exp').value || null);
   const frozen_at = categories.includes(FROZEN) ? ($('#f-frozen').value || isoDay(new Date())) : null;
+  const min_qty = Number($('#f-min').value) || 0;
   if (!categories.length) return toast('Scegli almeno una categoria.', true);
   if (!name || !(qty > 0)) return toast('Inserisci nome e quantità valida.', true);
   if (!noExp && !expiry) return toast('Inserisci la data di scadenza (o spunta "Nessuna scadenza").', true);
 
   await act(async () => {
-    const { p, note } = await addToInventory({ name, qty, unit, categories, expiry, frozen_at });
+    const { p, note } = await addToInventory({ name, qty, unit, categories, expiry, frozen_at, min_qty });
     const sh = await consumeShopping(name, qty, p.unit);
+    await ensureMinStock(p.id);
     return `${p.name} aggiunto${note}${sh.removed || sh.reduced ? ' · aggiornata la lista spesa' : ''}`;
   }, r => r);
 
   $('#f-name').value = '';
   $('#f-qty').value = 1;
+  $('#f-min').value = '';
   expTouched = false;
   $('#f-name').focus();
 }
@@ -716,7 +910,9 @@ async function onUse(lotId) {
     // La quantità usata va nella lista della spesa
     await addToShopping({ name: p.name, qty: used, unit: p.unit, category: catsOf(p)[0] });
     const otherLots = data.lots.filter(l => l.product_id === p.id && l.id !== lot.id).length;
-    if (rest <= 0 && otherLots === 0) await store.remove('products', p.id);
+    // Se ha una scorta minima il prodotto resta (come "finito"), altrimenti sparisce
+    if (rest <= 0 && otherLots === 0 && !minOf(p)) await store.remove('products', p.id);
+    else await ensureMinStock(p.id);
     return `Usato ${fmtQty(used)} ${p.unit} di ${p.name} · aggiunto alla spesa 🛒`;
   }, r => r);
 }
@@ -741,6 +937,8 @@ function onEdit(pid) {
       </div>
       <label>Categorie <span class="hint">(anche più di una)</span></label>
       <div class="chips" id="edit-cats"></div>
+      <label>Scorta minima <span class="hint">(facoltativa: sotto questa quantità va in lista spesa)</span>
+        <input name="minq" type="number" min="0" step="any" inputmode="decimal" placeholder="Nessuna" value="${minOf(p) || ''}"></label>
       <div class="edit-lots">
         <div class="sub">Lotti: quantità, scadenza<span class="fz-col"> e data di congelamento</span> (spunta 🗑 per eliminarne uno)</div>
         ${lots.map(l => `
@@ -777,12 +975,13 @@ function onEdit(pid) {
       del: row.querySelector('[name=del]').checked,
     }));
     const categories = pickerValue(picker), unit = el('unit').value;
+    const min_qty = Number(el('minq').value) > 0 ? Number(el('minq').value) : null;
     if (!categories.length) return toast('Scegli almeno una categoria.', true);
     const fz = categories.includes(FROZEN);
     rows.forEach(r => { if (!fz) r.frozen_at = null; });
     closeModal();
     await act(async () => {
-      await store.update('products', pid, { name, category: categories[0], categories, unit });
+      await store.update('products', pid, { name, category: categories[0], categories, unit, min_qty });
       let left = 0;
       for (const r of rows) {
         if (r.del || !(r.qty > 0)) { await store.remove('lots', r.id); continue; }
@@ -792,7 +991,8 @@ function onEdit(pid) {
           await store.update('lots', r.id, { qty: r.qty, expiry: r.expiry, frozen_at: r.frozen_at });
         }
       }
-      if (!left) await store.remove('products', pid);
+      if (!left && !min_qty) await store.remove('products', pid);
+      else await ensureMinStock(pid);
     }, 'Modifiche salvate');
   });
 }
@@ -879,6 +1079,7 @@ async function restockItem(item) {
   await act(async () => {
     const { p, note } = await addToInventory({ name: item.name, ...v });
     await consumeShopping(item.name, v.qty, p.unit);
+    await ensureMinStock(p.id);
     return `${p.name}: ${fmtQty(v.qty)} ${p.unit} in dispensa ✅${note}`;
   }, r => r);
   return true;
@@ -939,77 +1140,208 @@ async function onShareText() {
   showTextModal('🛒 Lista della spesa', text);
 }
 
-/* ═════════════ Ricette → prompt per Gemini ═════════════ */
-function onRecipes() {
-  const food = data.products
+/* ═════════════ Cosa cucino → menù settimanale con Gemini ═════════════ */
+const DAY_NAMES = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
+
+function foodInPantry() {
+  return data.products
     .filter(p => isFoodCats(catsOf(p)))
     .map(p => ({ p, lots: lotsOf(p.id) }))
     .filter(x => x.lots.length)
     .sort((a, b) => (a.lots[0].expiry || '9999').localeCompare(b.lots[0].expiry || '9999'));
+}
+
+function onCook() {
+  const food = foodInPantry();
   if (!food.length) return toast('Nessun alimento in dispensa.');
+  // Preseleziono quelli che scadono entro 5 giorni (almeno i 4 più urgenti)
+  const pre = new Set(food.map((x, i) => (lotStatus(x.lots[0]).rank <= 2 || i < 4) && x.lots[0].expiry ? i : -1).filter(i => i >= 0));
   const m = openModal(`
-    <h3>✨ Idee ricette con Gemini</h3>
-    <p class="sub">Ho già selezionato gli alimenti che scadono entro ${ORANGE_DAYS} giorni. Scegli gli ingredienti: creo un testo da copiare e incollare in Gemini.</p>
-    <div style="margin-top:12px">${food.map(({ p, lots }, i) => {
-      const s = lotStatus(lots[0]);
+    <h3>👩‍🍳 Cosa cucino?</h3>
+    <p class="sub">Ho già selezionato i prodotti che scadono prima: cambia pure le caselle. Creo un testo da dare a Gemini per un <b>menù settimanale</b>.</p>
+    <div class="cook-tools"><button class="link-btn" type="button" data-sel="all">Seleziona tutti</button><button class="link-btn" type="button" data-sel="none">Nessuno</button></div>
+    <div class="cook-list">${food.map(({ p, lots }, i) => {
+      const st = lotStatus(lots[0]);
       const tot = round2(lots.reduce((a, l) => a + Number(l.qty), 0));
-      return `<label class="recipe-item"><input type="checkbox" value="${i}" ${s.rank <= 2 ? 'checked' : ''}>
-        ${catIcon(catsOf(p)[0])}<span style="flex:1">${esc(p.name)} <span class="muted">· ${fmtQty(tot)} ${esc(p.unit)}</span></span><span class="pill ${s.cls}">${s.label}</span></label>`;
+      return `<label class="recipe-item"><input type="checkbox" value="${i}" ${pre.has(i) ? 'checked' : ''}>
+        ${catIcon(catsOf(p)[0])}<span style="flex:1">${esc(p.name)} <span class="muted">· ${fmtQty(tot)} ${esc(p.unit)}</span></span><span class="pill ${st.cls}">${st.label}</span></label>`;
     }).join('')}</div>
-    <form id="rec-opts">
+    <form id="cook-opts">
       <div class="row2">
-        <label>Persone<input name="people" type="number" min="1" max="12" value="2"></label>
-        <label>Tempo massimo<select name="time"><option value="15">15 minuti</option><option value="30" selected>30 minuti</option><option value="45">45 minuti</option></select></label>
+        <label>Persone<input name="people" type="number" min="1" max="12" value="${lsGet('sp-cook-people', 2)}" inputmode="numeric"></label>
+        <label>Giorni<select name="days"><option value="3">3 giorni</option><option value="5">5 giorni</option><option value="7" selected>7 giorni</option></select></label>
       </div>
+      <div class="row2">
+        <label>Pasti<select name="meals"><option value="cene" selected>Solo cene</option><option value="pranzi e cene">Pranzi e cene</option></select></label>
+        <label>Tempo max a cena<select name="time"><option value="20">20 minuti</option><option value="30" selected>30 minuti</option><option value="45">45 minuti</option></select></label>
+      </div>
+      <label>Preferenze <span class="hint">(facoltativo: es. niente pesce, poco piccante, una sera pizza)</span>
+        <input name="notes" value="${esc(lsGet('sp-cook-notes', ''))}" autocomplete="off"></label>
     </form>
     <div class="modal-foot">
       <button class="btn btn-light" data-close>Chiudi</button>
-      <button class="btn btn-purple" id="make-prompt"><i data-lucide="wand-sparkles"></i>Crea il testo</button>
+      <button class="btn btn-purple" id="make-prompt"><i data-lucide="wand-sparkles"></i>Crea il testo per Gemini</button>
     </div>`);
+  m.querySelectorAll('[data-sel]').forEach(b => b.addEventListener('click', () => {
+    m.querySelectorAll('.cook-list input').forEach(i => { i.checked = b.dataset.sel === 'all'; });
+  }));
   m.querySelector('#make-prompt').addEventListener('click', () => {
-    const picked = [...m.querySelectorAll('.recipe-item input:checked')].map(i => food[Number(i.value)]);
-    if (!picked.length) return toast('Seleziona almeno un ingrediente.', true);
-    const f = m.querySelector('#rec-opts');
-    const people = Number(f.elements.namedItem('people').value) || 2;
-    const time = f.elements.namedItem('time').value;
-    showPromptModal(buildRecipePrompt(picked, people, time));
+    const picked = [...m.querySelectorAll('.cook-list input:checked')].map(i => food[Number(i.value)]);
+    if (!picked.length) return toast('Seleziona almeno un prodotto.', true);
+    const f = m.querySelector('#cook-opts');
+    const v = n => f.elements.namedItem(n).value;
+    const opts = { people: Number(v('people')) || 2, days: Number(v('days')), meals: v('meals'), time: v('time'), notes: v('notes').trim() };
+    lsSet('sp-cook-people', opts.people); lsSet('sp-cook-notes', opts.notes);
+    const others = food.filter(x => !picked.includes(x));
+    showPromptModal(buildMenuPrompt(picked, others, opts));
   });
 }
 
-function buildRecipePrompt(picked, people, time) {
-  const lines = picked.map(({ p, lots }) => {
+function buildMenuPrompt(picked, others, { people, days, meals, time, notes }) {
+  const start = today();
+  const dayList = Array.from({ length: days }, (_, i) => {
+    const d = new Date(start); d.setDate(d.getDate() + i);
+    return `${DAY_NAMES[d.getDay()]} ${d.getDate()} ${d.toLocaleDateString('it-IT', { month: 'long' })}`;
+  });
+  const line = ({ p, lots }, withExp) => {
     const tot = round2(lots.reduce((a, l) => a + Number(l.qty), 0));
-    const s = lotStatus(lots[0]);
-    const when = s.key === 'none' ? '' : s.key === 'expired' ? ' – scaduto, da controllare' : ` – ${s.label.toLowerCase()}`;
-    return `- ${p.name}: ${fmtQty(tot)} ${p.unit}${when}`;
-  }).join('\n');
-  return `Sei un cuoco di casa italiano, pratico e bravo. Ho questi ingredienti in frigo/dispensa (alcuni stanno per scadere):
+    const st = lotStatus(lots[0]);
+    const fz = lots.some(l => l.frozen_at) ? ' (surgelato)' : '';
+    let when = '';
+    if (withExp && lots[0].expiry) when = st.key === 'expired' ? ' – scaduto, da controllare prima di usarlo' : ` – ${st.label.toLowerCase()} (${fmtDate(lots[0].expiry)})`;
+    return `- ${p.name}: ${fmtQty(tot)} ${p.unit}${fz}${when}`;
+  };
+  const pers = `${people} ${people === 1 ? 'persona' : 'persone'}`;
+  const pasto = meals === 'cene' ? '**Cena:** nome del piatto (tempo di preparazione)' : '**Pranzo:** nome del piatto (tempo)\n**Cena:** nome del piatto (tempo)';
+  return `Sei un cuoco di casa italiano, pratico e bravo. Preparami un MENÙ SETTIMANALE di ${days} giorni (${meals === 'cene' ? 'solo le cene' : 'pranzi e cene'}) per ${pers}, da ${dayList[0]} a ${dayList[dayList.length - 1]}.
 
-${lines}
+Prodotti da usare PER PRIMI (in ordine di scadenza):
+${picked.map(x => line(x, true)).join('\n')}
+${others.length ? `\nAltri ingredienti che ho in casa (usali se servono):\n${others.map(x => line(x, false)).join('\n')}\n` : ''}
+Regole:
+- Usa i prodotti in scadenza nei primi giorni, rispettando le date di scadenza.
+- Piatti semplici, veloci (massimo ${time} minuti) e buoni, cucina di casa italiana.
+- Varia: non ripetere lo stesso piatto o la stessa proteina due ${meals === 'cene' ? 'sere' : 'pasti'} di fila.
+- Posso aggiungere ingredienti base sempre in casa (olio, sale, pepe, aglio, cipolla, pasta, riso, farina, spezie).
+- Dosi per ${pers}.${notes ? `\n- Preferenze: ${notes}.` : ''}
 
-Proponimi 3 ricette SEMPLICI, VELOCI (massimo ${time} minuti in totale) e BUONE per ${people} ${people === 1 ? 'persona' : 'persone'}, che usino soprattutto gli ingredienti che scadono prima.
-Posso aggiungere solo ingredienti base che si hanno sempre in casa (olio, sale, pepe, aglio, cipolla, pasta, riso, farina, spezie comuni).
+Rispondi in italiano, in testo semplice (niente tabelle), esattamente con questo formato:
 
-Per ogni ricetta scrivi:
-1. Nome della ricetta e tempo totale
-2. Ingredienti con le dosi per ${people} ${people === 1 ? 'persona' : 'persone'}
-3. Procedimento in passaggi brevi e numerati
-4. Un consiglio per renderla ancora più buona
+## ${dayList[0]}
+${pasto}
+- Ingredienti: ...
+- Preparazione: 2-3 frasi brevi
 
-Rispondi in italiano, in modo chiaro e senza giri di parole.`;
+(ripeti per ogni giorno fino a ${dayList[dayList.length - 1]})
+
+## Lista della spesa
+- solo gli ingredienti che mi mancano, con le quantità`;
 }
 
 function showPromptModal(prompt) {
   const m = openModal(`
     <h3>📋 Testo per Gemini</h3>
-    <p class="sub">Copialo e incollalo in Gemini per ricevere le ricette.</p>
-    <textarea id="prompt-text" rows="14">${esc(prompt)}</textarea>
+    <ol class="steps">
+      <li>Premi <b>Copia testo</b> e poi <b>Apri Gemini</b>.</li>
+      <li>Incolla il testo in Gemini e invia.</li>
+      <li>Copia la risposta e torna qui: premi <b>Incolla il menù</b>.</li>
+    </ol>
+    <textarea id="prompt-text" rows="11">${esc(prompt)}</textarea>
     <div class="modal-foot">
-      <button class="btn btn-light" data-close>Chiudi</button>
       <a class="btn btn-light" href="https://gemini.google.com/app" target="_blank" rel="noopener"><i data-lucide="external-link"></i>Apri Gemini</a>
+      <button class="btn btn-light" id="paste-menu"><i data-lucide="clipboard-paste"></i>Incolla il menù</button>
       <button class="btn btn-purple" id="copy-prompt"><i data-lucide="copy"></i>Copia testo</button>
     </div>`);
   m.querySelector('#copy-prompt').addEventListener('click', () => copyText(m.querySelector('#prompt-text').value, 'Testo copiato! Ora incollalo in Gemini ✨'));
+  m.querySelector('#paste-menu').addEventListener('click', () => openMenuEditor());
+}
+
+/* ═════════════ Menù della settimana ═════════════ */
+const menusSorted = () => [...(data.menus || [])].sort((a, b) => b.created_at.localeCompare(a.created_at));
+const currentMenu = () => { const l = menusSorted(); return l.find(x => x.id === ui.menuId) || l[0] || null; };
+
+function openMenuEditor(menu) {
+  const def = `Menù dal ${today().toLocaleDateString('it-IT', { day: 'numeric', month: 'long' })}`;
+  const m = openModal(`
+    <h3>${menu ? '✏️ Modifica menù' : '📥 Incolla il menù di Gemini'}</h3>
+    <p class="sub">Incolla qui la risposta di Gemini così com'è: la sistemo io in modo leggibile.</p>
+    <form id="menu-form">
+      <label>Titolo<input name="title" value="${esc(menu ? menu.title : def)}" autocomplete="off"></label>
+      <label>Menù<textarea name="body" rows="13" placeholder="Incolla qui il testo…" required>${esc(menu ? menu.body : '')}</textarea></label>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-light" data-close>Annulla</button>
+        ${navigator.clipboard && navigator.clipboard.readText ? '<button type="button" class="btn btn-light" id="from-clip"><i data-lucide="clipboard-paste"></i>Incolla dagli appunti</button>' : ''}
+        <button type="submit" class="btn btn-purple"><i data-lucide="save"></i>Salva menù</button>
+      </div>
+    </form>`);
+  const f = m.querySelector('#menu-form');
+  const clip = m.querySelector('#from-clip');
+  if (clip) clip.addEventListener('click', async () => {
+    try { const t = await navigator.clipboard.readText(); if (t) f.elements.namedItem('body').value = t; else toast('Gli appunti sono vuoti.'); }
+    catch { toast('Non riesco a leggere gli appunti: tieni premuto nel campo e scegli "Incolla".', true); }
+  });
+  f.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const title = clean(f.elements.namedItem('title').value) || def;
+    const body = f.elements.namedItem('body').value.trim();
+    if (!body) return toast('Incolla prima il testo del menù.', true);
+    closeModal();
+    await act(async () => {
+      if (menu) await store.update('menus', menu.id, { title, body });
+      else { const r = await store.insert('menus', { title, body }); ui.menuId = r.id; }
+    }, 'Menù salvato 🍽️');
+    setTab('menu');
+  });
+}
+
+function renderMenu() {
+  const box = $('#menu-view');
+  if (!box) return;
+  const list = menusSorted();
+  const cur = currentMenu();
+  $('#menu-history').hidden = list.length < 2;
+  $('#menu-history').innerHTML = list.map(x => `<option value="${x.id}" ${cur && x.id === cur.id ? 'selected' : ''}>${esc(x.title)}</option>`).join('');
+  $('#menu-actions').hidden = !cur;
+  if (!cur) {
+    box.innerHTML = `<div class="empty"><i data-lucide="utensils"></i>
+      <div>Nessun menù salvato.<br>Premi <b>Cosa cucino?</b>, copia il testo in Gemini e incolla qui la risposta.</div></div>`;
+    return;
+  }
+  const when = new Date(cur.created_at).toLocaleDateString('it-IT', { day: 'numeric', month: 'long' });
+  box.innerHTML = `<div class="menu-title">${esc(cur.title)}<span>salvato il ${when}</span></div><div class="md">${mdToHtml(cur.body)}</div>`;
+}
+
+/* Markdown semplice → HTML (titoli, grassetto, elenchi, tabelle) */
+function mdToHtml(md) {
+  const out = [];
+  let list = null, table = [];
+  const inline = t => t
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/__(.+?)__/g, '<b>$1</b>')
+    .replace(/(^|[\s(])\*(?!\s)([^*]+?)\*(?=[\s).,;:!?]|$)/g, '$1<i>$2</i>');
+  const flushList = () => { if (list) { out.push(`<${list.t}>${list.items.map(i => `<li>${inline(i)}</li>`).join('')}</${list.t}>`); list = null; } };
+  const flushTable = () => {
+    if (!table.length) return;
+    const rows = table.filter(r => !/^\|?\s*:?-{2,}/.test(r));
+    out.push('<div class="md-table"><table>' + rows.map((r, i) => '<tr>' + r.replace(/^\||\|$/g, '').split('|')
+      .map(c => `<${i ? 'td' : 'th'}>${inline(c.trim())}</${i ? 'td' : 'th'}>`).join('') + '</tr>').join('') + '</table></div>');
+    table = [];
+  };
+  for (const raw of esc(md).replace(/\r/g, '').split('\n')) {
+    const l = raw.trim();
+    let m;
+    if (l.startsWith('|')) { flushList(); table.push(l); continue; }
+    flushTable();
+    if (!l) { flushList(); continue; }
+    if ((m = l.match(/^(#{1,6})\s+(.*)$/))) { flushList(); const n = Math.min(m[1].length + 2, 6); out.push(`<h${n}>${inline(m[2].replace(/\*\*/g, ''))}</h${n}>`); continue; }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(l)) { flushList(); out.push('<hr>'); continue; }
+    if ((m = l.match(/^[-*•]\s+(.*)$/))) { if (!list || list.t !== 'ul') { flushList(); list = { t: 'ul', items: [] }; } list.items.push(m[1]); continue; }
+    if ((m = l.match(/^\d+[.)]\s+(.*)$/))) { if (!list || list.t !== 'ol') { flushList(); list = { t: 'ol', items: [] }; } list.items.push(m[1]); continue; }
+    flushList();
+    out.push(`<p>${inline(l)}</p>`);
+  }
+  flushList(); flushTable();
+  return out.join('');
 }
 
 function showTextModal(title, text) {
@@ -1032,9 +1364,13 @@ async function copyText(text, okMsg) {
   toast(okMsg);
 }
 
-/* ═════════════ Notifiche scadenze ═════════════ */
+/* ═════════════ Notifiche scadenze ═════════════
+   Con Supabase: notifiche "push" inviate ogni mattina dal server, anche a sito chiuso.
+   In modalità demo (o se il push non è disponibile): notifiche mentre il sito è aperto. */
 const NKEY = 'smart-pantry-notify-v1';
-let notify = lsGet(NKEY, { enabled: false, sent: {} });
+// Chiave pubblica per le notifiche push (non è segreta). Si può sostituire in config.js con VAPID_PUBLIC_KEY.
+const VAPID_PUBLIC_KEY = (window.APP_CONFIG && window.APP_CONFIG.VAPID_PUBLIC_KEY) || 'BL65rwe1az7JncN1sqpP0nzgh2oFNIAx__Bt-ayrCh5YpnhO4dfD65yk-pT_swP_9PZKhVnPr-4ofOco4n8eH0g';
+let notify = lsGet(NKEY, { enabled: false, push: false, sent: {} });
 let swReg = null;
 
 function registerSW() {
@@ -1042,37 +1378,77 @@ function registerSW() {
   navigator.serviceWorker.register('sw.js').then(r => { swReg = r; }).catch(() => { /* non disponibile */ });
 }
 const notifyOn = () => notify.enabled && 'Notification' in window && Notification.permission === 'granted';
+const pushSupported = () => store && store.kind === 'supabase' && 'serviceWorker' in navigator && 'PushManager' in window && !!VAPID_PUBLIC_KEY;
 
 function updateBell() {
   const b = $('#btn-notify');
   if (!b) return;
   const on = notifyOn();
   b.classList.toggle('on', on);
-  b.title = on ? 'Notifiche scadenze attive (clicca per disattivare)' : 'Attiva le notifiche delle scadenze';
+  b.title = on ? (notify.push ? 'Notifiche attive anche a sito chiuso (clicca per disattivare)' : 'Notifiche attive (clicca per disattivare)') : 'Attiva le notifiche delle scadenze';
   b.innerHTML = `<i data-lucide="${on ? 'bell-ring' : 'bell-off'}"></i>`;
   icons();
 }
 
+function b64ToBytes(b64) {
+  const pad = '='.repeat((4 - b64.length % 4) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, c => c.charCodeAt(0));
+}
+
+async function subscribePush() {
+  const reg = swReg || await navigator.serviceWorker.register('sw.js');
+  if (!reg.active) await Promise.race([navigator.serviceWorker.ready, new Promise((_, no) => setTimeout(() => no(new Error('service worker non pronto')), 8000))]);
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_PUBLIC_KEY) });
+  const j = sub.toJSON();
+  const { error } = await sb.from('push_subscriptions').upsert(
+    { endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, user_agent: navigator.userAgent.slice(0, 200) },
+    { onConflict: 'endpoint' });
+  if (error) throw error;
+}
+async function unsubscribePush() {
+  try {
+    const reg = swReg || await navigator.serviceWorker.getRegistration();
+    const sub = reg && await reg.pushManager.getSubscription();
+    if (sub) {
+      await sb.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+      await sub.unsubscribe();
+    }
+  } catch (e) { console.warn(e); }
+}
+
 async function onToggleNotify() {
   if (!('Notification' in window)) {
-    return toast('Questo browser non supporta le notifiche. Su iPhone: Condividi → "Aggiungi a Home", poi apri l\'app dalla Home.', true);
+    return toast('Questo browser non supporta le notifiche. Su iPhone: Condividi → "Aggiungi alla schermata Home", poi apri l\'app dalla Home.', true);
   }
   if (notifyOn()) {
-    notify.enabled = false; lsSet(NKEY, notify); updateBell();
+    if (notify.push) await unsubscribePush();
+    notify = { enabled: false, push: false, sent: {} }; lsSet(NKEY, notify); updateBell();
     return toast('Notifiche disattivate');
   }
   const perm = await Notification.requestPermission();
   if (perm !== 'granted') return toast('Permesso negato: abilita le notifiche per questo sito nelle impostazioni del browser.', true);
-  notify = { enabled: true, sent: {} };
+  if (pushSupported()) {
+    try {
+      await subscribePush();
+      notify = { enabled: true, push: true, sent: {} }; lsSet(NKEY, notify); updateBell();
+      return toast('Notifiche attive ✅ Ogni mattina ricevi le scadenze, anche a sito chiuso.');
+    } catch (e) {
+      console.warn('Push non disponibile, uso le notifiche locali', e);
+      toast('Notifiche a sito chiuso non disponibili (' + translateErr(e) + '). Uso quelle a sito aperto.', true);
+    }
+  }
+  notify = { enabled: true, push: false, sent: {} };
   lsSet(NKEY, notify); updateBell();
   const n = await checkExpiryNotifications();
-  toast(n ? `Notifiche attive ✅ (${n} scadenze segnalate)` : 'Notifiche attive ✅ Nessun prodotto in scadenza ora');
+  if (!pushSupported()) toast(n ? `Notifiche attive ✅ (${n} scadenze segnalate)` : 'Notifiche attive ✅ Nessun prodotto in scadenza ora');
 }
 
-/* Una notifica per ogni lotto in scadenza. Ogni lotto viene segnalato
+/* Notifiche locali (solo se il push non è attivo): una per ogni lotto in scadenza,
    una volta per fascia: entro 5 gg, entro 2 gg, oggi, scaduto. */
 async function checkExpiryNotifications() {
-  if (!notifyOn() || !appShown) return 0;
+  if (!notifyOn() || notify.push || !appShown) return 0;
   const alive = new Set();
   let count = 0;
   for (const lot of data.lots) {
@@ -1114,7 +1490,7 @@ function onMenu() {
   const m = openModal(`
     <h3>Menu</h3>
     <div class="menu-list">
-      ${item('btn-recipes', 'sparkles', 'Ricette', 'Testo per Gemini con gli ingredienti')}
+      ${item('btn-recipes', 'chef-hat', 'Cosa cucino?', 'Menù settimanale con Gemini')}
       ${item('btn-text', 'clipboard-list', 'Spesa come testo', 'Copia o condividi la lista')}
       ${item('btn-notify', on ? 'bell-ring' : 'bell-off', on ? 'Notifiche attive' : 'Attiva notifiche', on ? 'Tocca per disattivarle' : 'Avvisi per ogni scadenza')}
       ${item('btn-backup', 'download', 'Salva backup', 'Scarica un file con tutti i dati')}
@@ -1148,7 +1524,7 @@ async function onRestoreFile(e) {
   let nd;
   try {
     nd = JSON.parse(await file.text());
-    if (!TABLES.every(t => Array.isArray(nd[t]))) throw new Error('formato');
+    if (!CORE_TABLES.every(t => Array.isArray(nd[t]))) throw new Error('formato');
   } catch {
     return toast('File di backup non valido.', true);
   }
@@ -1156,7 +1532,7 @@ async function onRestoreFile(e) {
     `Contiene ${nd.products.length} prodotti e ${nd.lots.length} lotti.\nI dati attuali verranno SOSTITUITI.`;
   if (!(await confirmBox(msg, 'Ripristina'))) return;
   const cleanData = {};
-  for (const t of TABLES) cleanData[t] = nd[t];
+  for (const t of TABLES) cleanData[t] = Array.isArray(nd[t]) ? nd[t] : [];
   await act(() => store.replaceAll(cleanData), 'Backup ripristinato ✅');
 }
 
@@ -1303,13 +1679,14 @@ function setNoExp(on) {
 }
 
 function setTab(tab) {
-  if (!['pantry', 'shopping', 'mother'].includes(tab)) tab = 'pantry';
+  if (!['pantry', 'shopping', 'menu', 'mother'].includes(tab)) tab = 'pantry';
   ui.tab = tab;
   lsSet('sp-tab', tab);
   $$('[data-tab]').forEach(x => x.classList.toggle('active', x.dataset.tab === tab));
   $('#tab-pantry').hidden = tab !== 'pantry';
   $('#tab-shopping').hidden = tab !== 'shopping';
   $('#tab-mother').hidden = tab !== 'mother';
+  $('#tab-menu').hidden = tab !== 'menu';
   $('#stats').hidden = tab !== 'pantry';
   if (tab === 'pantry' && chart) chart.resize();
 }
@@ -1345,7 +1722,7 @@ function bindEvents() {
   // Se scrivo/scelgo un prodotto esistente, precompilo categoria e unità
   $('#f-name').addEventListener('input', e => {
     const p = productByName(e.target.value);
-    if (p) { $('#f-cats')._set(catsOf(p)); $('#f-unit').value = p.unit; onFormCatsChange(catsOf(p)); }
+    if (p) { $('#f-cats')._set(catsOf(p)); $('#f-unit').value = p.unit; $('#f-min').value = minOf(p) || ''; onFormCatsChange(catsOf(p)); }
   });
   $('#jump-add').addEventListener('click', () => {
     $('#add-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1359,6 +1736,14 @@ function bindEvents() {
     if (b.dataset.use) onUse(b.dataset.use);
     else if (b.dataset.edit) onEdit(b.dataset.edit);
     else if (b.dataset.del) onDelete(b.dataset.del);
+    else if (b.dataset.readd) {
+      const p = productByName(b.dataset.readd);
+      $('#f-name').value = b.dataset.readd;
+      $('#f-name').dispatchEvent(new Event('input'));
+      if (p) $('#f-qty').value = minOf(p) || 1;
+      $('#add-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setTimeout(() => $('#f-qty').focus(), 400);
+    }
   });
   $('#search').addEventListener('input', e => { ui.q = e.target.value; renderInventory(); icons(); });
   $('#cat-filter').addEventListener('change', e => { ui.cat = e.target.value; renderInventory(); icons(); });
@@ -1425,7 +1810,18 @@ function bindEvents() {
   $('#btn-restore').addEventListener('click', () => $('#restore-file').click());
   $('#restore-file').addEventListener('change', onRestoreFile);
   $('#btn-text').addEventListener('click', onShareText);
-  $('#btn-recipes').addEventListener('click', onRecipes);
+  $('#btn-recipes').addEventListener('click', onCook);
+  $('#menu-cook').addEventListener('click', onCook);
+  $('#menu-paste').addEventListener('click', () => openMenuEditor());
+  $('#menu-edit').addEventListener('click', () => { const c = currentMenu(); if (c) openMenuEditor(c); });
+  $('#menu-copy').addEventListener('click', () => { const c = currentMenu(); if (c) copyText(c.body, 'Menù copiato 📋'); });
+  $('#menu-del').addEventListener('click', async () => {
+    const c = currentMenu();
+    if (!c || !(await confirmBox(`Eliminare "${c.title}"?`, 'Elimina'))) return;
+    ui.menuId = null;
+    await act(() => store.remove('menus', c.id), 'Menù eliminato');
+  });
+  $('#menu-history').addEventListener('change', e => { ui.menuId = e.target.value; renderMenu(); icons(); });
   $('#btn-notify').addEventListener('click', onToggleNotify);
   $('#btn-menu').addEventListener('click', onMenu);
 

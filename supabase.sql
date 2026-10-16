@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════
---  Smart Pantry Pro — schema database (v4)
+--  Smart Pantry Pro — schema database (v5)
 --  Incolla tutto in Supabase → SQL Editor → New query → Run.
 --  Si può rieseguire quante volte vuoi: NON cancella i dati,
 --  aggiunge solo ciò che manca (aggiorna anche le versioni precedenti).
@@ -64,6 +64,37 @@ update public.products set categories = array[category] where categories is null
 alter table public.shopping add column if not exists selected  boolean not null default false;
 alter table public.shopping add column if not exists in_mother boolean not null default false;
 
+-- v5: scorta minima, menù salvati, notifiche push
+alter table public.products add column if not exists min_qty numeric;
+
+create table if not exists public.menus (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  title       text not null default 'Menù',
+  body        text not null,
+  created_at  timestamptz not null default now()
+);
+
+create table if not exists public.push_subscriptions (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  endpoint    text not null unique,
+  p256dh      text not null,
+  auth        text not null,
+  user_agent  text,
+  created_at  timestamptz not null default now()
+);
+
+-- Notifiche già inviate (le usa solo il server, per non ripeterle)
+create table if not exists public.push_sent (
+  lot_id   uuid not null references public.lots (id) on delete cascade,
+  stage    text not null,
+  sent_at  timestamptz not null default now(),
+  primary key (lot_id, stage)
+);
+alter table public.push_sent enable row level security;
+revoke all on public.push_sent from anon, authenticated;
+
 -- v2: link segreto per la sezione Mother (lista visibile senza login)
 create table if not exists public.share_links (
   user_id     uuid primary key default auth.uid() references auth.users (id) on delete cascade,
@@ -75,7 +106,7 @@ create table if not exists public.share_links (
 do $$
 declare t text;
 begin
-  foreach t in array array['products', 'lots', 'usage_log', 'shopping', 'share_links'] loop
+  foreach t in array array['products', 'lots', 'usage_log', 'shopping', 'share_links', 'menus', 'push_subscriptions'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('drop policy if exists "solo i miei dati" on public.%I', t);
     execute format(
@@ -118,7 +149,7 @@ grant execute on function public.mother_toggle(uuid, uuid, boolean) to anon, aut
 do $$
 declare t text;
 begin
-  foreach t in array array['products', 'lots', 'usage_log', 'shopping'] loop
+  foreach t in array array['products', 'lots', 'usage_log', 'shopping', 'menus'] loop
     begin
       execute format('alter publication supabase_realtime add table public.%I', t);
     exception when others then null; -- già presente o Realtime non disponibile

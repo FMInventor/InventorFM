@@ -30,10 +30,15 @@ Con `config.js` vuoto l'app parte in **modalità demo** (dati solo nel browser).
 - **Surgelati**: compare la data di congelamento; la scadenza viene proposta a 3 mesi (modificabile).
 - **Accesso**: non c'è il pulsante per creare account. Nuovi utenti si aggiungono da Supabase → Authentication → Users → Add user.
 - **Colori**: rosso = scade entro 2 giorni, arancione = entro 5 giorni, bordeaux = scaduto.
-- **Ricette**: scegli gli ingredienti e copia il testo pronto da incollare in Gemini.
-- **Notifiche** (campanella): una notifica per ogni scadenza, quando entra nei 5 giorni, nei 2 giorni,
-  il giorno stesso e quando scade. Arrivano quando il sito è aperto o viene riaperto.
-  Su iPhone servono iOS 16.4+ e il sito aggiunto alla schermata Home.
+- **Cosa Cucino**: seleziona in automatico i prodotti che scadono prima (puoi cambiare le caselle) e prepara
+  il testo per Gemini per un menù settimanale. La risposta di Gemini si incolla nella sezione **Menù**.
+- **Scorta minima**: se in casa scendi sotto la quantità minima, la differenza va da sola in lista spesa;
+  il prodotto resta visibile come "Finito" finché non lo ricompri.
+- **Offline**: senza connessione l'app funziona con l'ultima copia dei dati; le modifiche vengono salvate
+  appena torna internet. Anche il link di Mother funziona senza campo.
+- **Notifiche** (campanella / menu ☰): una notifica per ogni scadenza, quando entra nei 5 giorni, nei 2 giorni,
+  il giorno stesso e quando scade. Con il kit notifiche configurato arrivano ogni mattina anche a sito
+  chiuso. Su iPhone servono iOS 16.4+ e il sito aggiunto alla schermata Home.
 - **Mother**: in Lista della Spesa selezioni i prodotti con la casella e premi **Genera lista Mother**.
   Nella sezione Mother (e nel link condiviso, che si apre senza password) compare solo quella lista,
   grande e semplice, e si aggiorna da sola. Se rigeneri la lista, i prodotti che Mother aveva già
