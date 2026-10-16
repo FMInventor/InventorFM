@@ -107,7 +107,7 @@ svg.lucide { width: 17px; height: 17px; stroke-width: 2; flex: none; }
   backdrop-filter: saturate(1.4) blur(10px); -webkit-backdrop-filter: saturate(1.4) blur(10px);
   border-bottom: 1px solid var(--line);
 }
-.brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.brand { display: flex; align-items: center; gap: 11px; flex: none; }
 .brand-icon {
   width: 36px; height: 36px; border-radius: 11px; flex: none;
   display: grid; place-items: center; background: var(--basil); color: #fff;
@@ -118,7 +118,7 @@ svg.lucide { width: 17px; height: 17px; stroke-width: 2; flex: none; }
 .brand-title { font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: -.02em; white-space: nowrap; }
 .brand-sub { display: none; }
 
-.tabs { display: flex; gap: 2px; align-self: stretch; margin-left: 8px; }
+.tabs { display: flex; gap: 2px; align-self: stretch; margin-left: 8px; min-width: 0; }
 .tab {
   position: relative; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
   padding: 0 14px; border: 0; background: none; cursor: pointer;
@@ -139,7 +139,7 @@ svg.lucide { width: 17px; height: 17px; stroke-width: 2; flex: none; }
   font: 700 11.5px var(--text);
 }
 .badge.zero { background: var(--line); color: var(--muted); }
-.actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
 /* Backup e ripristino si usano di rado: solo icona */
 #btn-backup span, #btn-restore span { display: none; }
 #btn-backup, #btn-restore { padding: 9px; min-width: 40px; }
@@ -150,7 +150,7 @@ svg.lucide { width: 17px; height: 17px; stroke-width: 2; flex: none; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-panel); }
 .pad { padding: 24px; }
 .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr); gap: 22px; align-items: start; }
-.col { display: flex; flex-direction: column; gap: 22px; }
+.col { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
 .mobile-only { display: none; }
 
 h2 {
@@ -460,14 +460,22 @@ body.mother-mode { background: var(--paper); padding-bottom: 0 !important; }
   #btn-text span { display: none; }
   #btn-text { padding: 9px; min-width: 40px; }
 }
+/* Schermi medi: il nome lascia spazio alle schede (resta il logo) */
+@media (max-width: 1180px) {
+  .topbar { gap: 14px; }
+  .brand-title { display: none; }
+  .tabs { margin-left: 0; }
+}
 @media (max-width: 1040px) {
   .tab { padding: 0 10px; }
   .tab svg.lucide { display: none; }
+  #btn-recipes span { display: none; }
+  #btn-recipes { padding: 9px; min-width: 40px; }
   .stats { grid-template-columns: repeat(5, 1fr); }
   .stat { flex-direction: column; align-items: flex-start; gap: 8px; }
 }
 @media (max-width: 900px) {
-  .grid { grid-template-columns: 1fr; }
+  .grid { grid-template-columns: minmax(0, 1fr); }
   .inv { order: -1; min-height: 0; }
   .mobile-only { display: inline-flex; margin-bottom: 8px; }
   #add-form { scroll-margin-top: 80px; }
@@ -475,7 +483,7 @@ body.mother-mode { background: var(--paper); padding-bottom: 0 !important; }
 @media (max-width: 760px) {
   body { padding-bottom: calc(74px + env(safe-area-inset-bottom)); }
   .topbar { padding: 0 16px; min-height: 60px; gap: 10px; }
-  .brand-title { font-size: 18px; }
+  .brand-title { display: block; font-size: 18px; }
   .brand-icon { width: 32px; height: 32px; border-radius: 10px; }
   .tabs { display: none; }
   #btn-menu { display: inline-flex; }
@@ -564,6 +572,11 @@ body.mother-mode { background: var(--paper); padding-bottom: 0 !important; }
 }
 @media (max-width: 380px) {
   .brand-title { font-size: 16px; }
+}
+@media (max-width: 340px) {
+  .brand-title { display: none; }
+}
+@media (max-width: 380px) {
   .m-item { font-size: 19px; min-height: 64px; }
   .qty-chip { font-size: 12.5px; padding: 3px 7px; }
 }
