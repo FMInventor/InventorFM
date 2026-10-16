@@ -11,7 +11,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-  <link rel="stylesheet" href="style.css?v=2">
+  <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 
@@ -24,7 +24,6 @@
     <label>Email<input type="email" id="login-email" required autocomplete="email"></label>
     <label>Password<input type="password" id="login-pass" required minlength="6" autocomplete="current-password"></label>
     <button class="btn btn-dark full" type="submit">Accedi</button>
-    <button class="btn btn-ghost full" type="button" id="signup-btn">Crea account (primo accesso)</button>
     <p id="login-msg" class="login-msg"></p>
   </form>
 </section>
@@ -98,8 +97,10 @@
             <label>Quantità *<input id="f-qty" type="number" min="0.01" step="any" value="1" required inputmode="decimal"></label>
             <label>Unità<select id="f-unit"></select></label>
           </div>
+          <label>Categorie * <span class="hint">(puoi sceglierne più di una, es. Surgelati + Carne e Pesce)</span></label>
+          <div class="chips" id="f-cats"></div>
           <div class="row2">
-            <label>Categoria *<select id="f-cat"></select></label>
+            <label id="f-frozen-wrap" hidden>Data di congelamento<input id="f-frozen" type="date"></label>
             <label>Data di Scadenza <span class="exp-star">*</span><input id="f-exp" type="date"></label>
           </div>
           <label class="check"><input type="checkbox" id="f-noexp"> Nessuna scadenza (es. strumenti)</label>
@@ -196,6 +197,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/lucide@0.460.0/dist/umd/lucide.min.js"></script>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

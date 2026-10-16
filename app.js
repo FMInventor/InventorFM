@@ -5,15 +5,20 @@
 /* ═════════════ Costanti ═════════════ */
 // L'ordine segue il percorso tipico al supermercato (usato anche nella sezione Mother)
 const CATS = [
-  { id: 'Frutta e Verdura', emoji: '🥦', food: true },
-  { id: 'Carne e Pesce',    emoji: '🥩', food: true },
-  { id: 'Latticini e Uova', emoji: '🧀', food: true },
-  { id: 'Surgelati',        emoji: '🧊', food: true },
-  { id: 'Bevande',          emoji: '🥤', food: true },
-  { id: 'Snack e Dolci',    emoji: '🍫', food: true },
-  { id: 'Altro',            emoji: '🥫', food: true },
-  { id: 'Strumenti',        emoji: '🔧', food: false },
+  { id: 'Frutta e Verdura', icon: 'apple',           color: '#15803d', bg: '#dcfce7', food: true },
+  { id: 'Pane e Cereali',   icon: 'wheat',           color: '#b45309', bg: '#fef3c7', food: true },
+  { id: 'Carne e Pesce',    icon: 'beef',            color: '#b91c1c', bg: '#fee2e2', food: true },
+  { id: 'Latticini e Uova', icon: 'milk',            color: '#0369a1', bg: '#e0f2fe', food: true },
+  { id: 'Surgelati',        icon: 'snowflake',       color: '#0e7490', bg: '#cffafe', food: true },
+  { id: 'Conserve',         icon: 'cylinder',        color: '#9a3412', bg: '#ffedd5', food: true },
+  { id: 'Bevande',          icon: 'cup-soda',        color: '#6d28d9', bg: '#ede9fe', food: true },
+  { id: 'Snack e Dolci',    icon: 'cookie',          color: '#be185d', bg: '#fce7f3', food: true },
+  { id: 'Altro',            icon: 'shopping-basket', color: '#475569', bg: '#f1f5f9', food: true },
+  { id: 'Igiene e Pulizia', icon: 'spray-can',       color: '#0f766e', bg: '#ccfbf1', food: false },
+  { id: 'Strumenti',        icon: 'wrench',          color: '#334155', bg: '#e2e8f0', food: false },
 ];
+const FROZEN = 'Surgelati';
+const FROZEN_DAYS = 90; // scadenza suggerita: 3 mesi dal congelamento
 const FOOD_CATS = CATS.filter(c => c.food).map(c => c.id);
 const UNITS = [
   ['pz', 'Pezzi (pz)'], ['g', 'Grammi (g)'], ['kg', 'Chili (kg)'],
@@ -31,6 +36,10 @@ const GROUPS = [
 ];
 
 const catOf = id => CATS.find(c => c.id === id) || CATS.find(c => c.id === 'Altro');
+// Un prodotto può avere più categorie (es. Surgelati + Carne e Pesce); la prima è la principale
+const catsOf = p => (p && Array.isArray(p.categories) && p.categories.length) ? p.categories : [p?.category || 'Altro'];
+const isFoodCats = list => list.some(c => catOf(c).food);
+const catIcon = id => { const c = catOf(id); return `<span class="cat-ic" style="--c:${c.color};--b:${c.bg}" title="${esc(c.id)}"><i data-lucide="${c.icon}"></i></span>`; };
 const $ = sel => document.querySelector(sel);
 const $$ = sel => [...document.querySelectorAll(sel)];
 const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -51,6 +60,7 @@ const today = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
 const daysLeft = s => Math.round((parseDay(s) - today()) / 86400000);
 const fmtDate = s => parseDay(s).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' });
 const plusDays = n => { const d = new Date(); d.setDate(d.getDate() + n); return isoDay(d); };
+const addDaysTo = (iso, n) => { const d = parseDay(iso); d.setDate(d.getDate() + n); return isoDay(d); };
 const weekStart = date => {
   const d = new Date(date); d.setHours(0, 0, 0, 0);
   d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // lunedì
@@ -227,23 +237,15 @@ function scheduleRefresh() {
 document.addEventListener('visibilitychange', () => { if (!document.hidden && appShown) refresh(); });
 
 /* ═════════════ Login ═════════════ */
-async function doAuth(signup) {
+async function doAuth() {
   const email = $('#login-email').value.trim();
   const password = $('#login-pass').value;
   const msg = $('#login-msg');
   if (!email || password.length < 6) { msg.className = 'login-msg err'; msg.textContent = 'Inserisci email e una password di almeno 6 caratteri.'; return; }
-  msg.className = 'login-msg'; msg.textContent = signup ? 'Creo l\'account…' : 'Accesso…';
+  msg.className = 'login-msg'; msg.textContent = 'Accesso…';
   try {
-    if (signup) {
-      const { data: r, error } = await sb.auth.signUp({
-        email, password, options: { emailRedirectTo: location.origin + location.pathname },
-      });
-      if (error) throw error;
-      if (!r.session) { msg.textContent = 'Account creato! Controlla la mail per confermarlo, poi accedi.'; return; }
-    } else {
-      const { error } = await sb.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-    }
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) throw error;
     msg.textContent = '';
   } catch (e) {
     msg.className = 'login-msg err';
@@ -296,14 +298,22 @@ async function act(fn, okMsg) {
 const productByName = name => data.products.find(x => norm(x.name) === norm(name));
 
 /* Aggiunge al magazzino (crea il prodotto o un nuovo lotto) */
-async function addToInventory({ name, qty, unit, category, expiry }) {
+async function addToInventory({ name, qty, unit, categories, expiry, frozen_at }) {
   let p = productByName(name);
   let note = '';
-  if (!p) p = await store.insert('products', { name, category, unit });
-  else if (p.unit !== unit) note = ` (unità mantenuta: ${p.unit})`;
-  const same = data.lots.find(l => l.product_id === p.id && (l.expiry || null) === (expiry || null));
+  categories = categories && categories.length ? categories : ['Altro'];
+  if (!p) p = await store.insert('products', { name, category: categories[0], categories, unit });
+  else {
+    if (p.unit !== unit) note = ` (unità mantenuta: ${p.unit})`;
+    if (catsOf(p).join('|') !== categories.join('|')) {
+      p = await store.update('products', p.id, { category: categories[0], categories });
+    }
+  }
+  if (!categories.includes(FROZEN)) frozen_at = null;
+  const same = data.lots.find(l => l.product_id === p.id && (l.expiry || null) === (expiry || null)
+    && (l.frozen_at || null) === (frozen_at || null));
   if (same) await store.update('lots', same.id, { qty: round2(Number(same.qty) + qty) });
-  else await store.insert('lots', { product_id: p.id, qty, expiry: expiry || null });
+  else await store.insert('lots', { product_id: p.id, qty, expiry: expiry || null, frozen_at: frozen_at || null });
   return { p, note };
 }
 
@@ -377,7 +387,7 @@ function renderInventory() {
     .map(p => ({ p, lots: lotsOf(p.id) }))
     .filter(x => x.lots.length)
     .filter(x => !ui.q || norm(x.p.name).includes(norm(ui.q)))
-    .filter(x => !ui.cat || x.p.category === ui.cat)
+    .filter(x => !ui.cat || catsOf(x.p).includes(ui.cat))
     .map(x => ({ ...x, st: lotStatus(x.lots[0]) }))
     .sort((a, b) => {
       const ea = a.lots[0].expiry, eb = b.lots[0].expiry;
@@ -401,16 +411,23 @@ function renderInventory() {
   }).join('');
 }
 
+function frozenInfo(l) {
+  if (!l.frozen_at) return '';
+  const n = -daysLeft(l.frozen_at);
+  const ago = n <= 0 ? 'oggi' : n === 1 ? 'da 1 giorno' : `da ${n} giorni`;
+  return `<div class="frozen-info"><i data-lucide="snowflake"></i>Congelato il ${fmtDate(l.frozen_at)} (${ago})</div>`;
+}
+
 function productCard({ p, lots, st }) {
   const tot = round2(lots.reduce((s, l) => s + Number(l.qty), 0));
-  const c = catOf(p.category);
+  const cats = catsOf(p);
   return `<article class="prod g-${st.key}">
     <div class="prod-head">
       <div class="prod-title">
-        <span class="prod-emoji">${c.emoji}</span>
+        ${catIcon(cats[0])}
         <div>
           <div class="prod-name">${esc(p.name)} <span class="tot">Tot: ${fmtQty(tot)} ${esc(p.unit)}</span></div>
-          <div class="prod-cat">${esc(p.category)}</div>
+          <div class="prod-cat">${cats.map(esc).join(' · ')}</div>
         </div>
       </div>
       <div class="prod-actions">
@@ -421,7 +438,7 @@ function productCard({ p, lots, st }) {
     <div class="lots">${lots.map(l => {
       const s = lotStatus(l);
       return `<div class="lot ${s.cls}">
-        <div><b>${fmtQty(l.qty)} ${esc(p.unit)}</b> • ${l.expiry ? `Scad: <b>${fmtDate(l.expiry)}</b>` : 'Senza scadenza'}</div>
+        <div><b>${fmtQty(l.qty)} ${esc(p.unit)}</b> • ${l.expiry ? `Scad: <b>${fmtDate(l.expiry)}</b>` : 'Senza scadenza'}${frozenInfo(l)}</div>
         <div class="lot-right">
           <span class="pill ${s.cls}">${s.label}</span>
           <button class="btn use-btn" data-use="${l.id}"><i data-lucide="check"></i>Usa</button>
@@ -458,7 +475,7 @@ function renderWeeks() {
 function renderRadar() {
   if (!window.Chart) return;
   const used = usageInWeek(ui.week);
-  const counts = FOOD_CATS.map(c => used.filter(u => u.category === c).length);
+  const counts = FOOD_CATS.map(c => used.filter(u => (u.categories && u.categories.length ? u.categories : [u.category]).includes(c)).length);
   const max = Math.max(1, ...counts);
   if (!chart) {
     chart = new Chart($('#radar'), {
@@ -493,7 +510,7 @@ function renderRadar() {
 
 /* ── Lista spesa ── */
 function shopCategory(s) {
-  return s.category || productByName(s.name)?.category || 'Altro';
+  return s.category || catsOf(productByName(s.name))[0] || 'Altro';
 }
 function renderShopping() {
   const open = data.shopping.filter(s => !s.done).length;
@@ -504,9 +521,10 @@ function renderShopping() {
     const q = qtyText(s.qty, s.unit);
     return `<li class="shop-item ${s.done ? 'done' : ''}">
       <input type="checkbox" data-shop-toggle="${s.id}" ${s.done ? 'checked' : ''} aria-label="Preso">
+      ${catIcon(c.id)}
       <div class="info">
         <div class="name">${esc(s.name)}</div>
-        <div class="meta">${c.emoji} ${esc(c.id)}${s.note ? ` · ${esc(s.note)}` : ''}</div>
+        <div class="meta">${esc(c.id)}${s.note ? ` · ${esc(s.note)}` : ''}</div>
       </div>
       ${q ? `<span class="qty-chip">${esc(q)}</span>` : ''}
       <button class="btn restock-btn" data-restock="${s.id}" title="Aggiorna nell'inventario"><i data-lucide="package-plus"></i><span>In dispensa</span></button>
@@ -543,9 +561,9 @@ function renderMother(target, items, { updatedAt, error } = {}) {
     body = `
       <div class="m-progress"><div style="width:${Math.round(done.length / total * 100)}%"></div></div>
       <div class="m-count">${todo.length ? `Ancora da prendere: <b>${todo.length}</b> · Presi: ${done.length}` : 'Hai preso tutto! Grazie ❤️'}</div>
-      ${groups.map(g => `<div class="m-cat"><span class="em">${g.c.emoji}</span>${esc(g.c.id)}</div>
+      ${groups.map(g => `<div class="m-cat">${catIcon(g.c.id)}${esc(g.c.id)}</div>
         <ul class="m-list">${g.list.map(itemHtml).join('')}</ul>`).join('')}
-      ${done.length ? `<div class="m-cat" style="color:#15803d"><span class="em">✅</span>Già nel carrello</div>
+      ${done.length ? `<div class="m-cat" style="color:#15803d"><span class="cat-ic" style="--c:#15803d;--b:#dcfce7"><i data-lucide="circle-check"></i></span>Già nel carrello</div>
         <ul class="m-list">${done.map(itemHtml).join('')}</ul>` : ''}`;
   }
 
@@ -568,7 +586,7 @@ async function startMotherPage(token) {
   let error = '';
   let last = null;
   let pending = 0;
-  const draw = () => renderMother(box, items, { updatedAt: last, error });
+  const draw = () => { renderMother(box, items, { updatedAt: last, error }); icons(); };
 
   const load = async () => {
     if (pending) return; // non sovrascrivere un tocco appena fatto
@@ -637,20 +655,23 @@ async function onAdd(e) {
   const name = clean($('#f-name').value);
   const qty = Number($('#f-qty').value);
   const unit = $('#f-unit').value;
-  const category = $('#f-cat').value;
+  const categories = pickerValue($('#f-cats'));
   const noExp = $('#f-noexp').checked;
   const expiry = noExp ? null : ($('#f-exp').value || null);
+  const frozen_at = categories.includes(FROZEN) ? ($('#f-frozen').value || isoDay(new Date())) : null;
+  if (!categories.length) return toast('Scegli almeno una categoria.', true);
   if (!name || !(qty > 0)) return toast('Inserisci nome e quantità valida.', true);
   if (!noExp && !expiry) return toast('Inserisci la data di scadenza (o spunta "Nessuna scadenza").', true);
 
   await act(async () => {
-    const { p, note } = await addToInventory({ name, qty, unit, category, expiry });
+    const { p, note } = await addToInventory({ name, qty, unit, categories, expiry, frozen_at });
     const sh = await consumeShopping(name, qty, p.unit);
     return `${p.name} aggiunto${note}${sh.removed || sh.reduced ? ' · aggiornata la lista spesa' : ''}`;
   }, r => r);
 
   $('#f-name').value = '';
   $('#f-qty').value = 1;
+  expTouched = false;
   $('#f-name').focus();
 }
 
@@ -667,11 +688,11 @@ async function onUse(lotId) {
     if (rest <= 0) await store.remove('lots', lot.id);
     else await store.update('lots', lot.id, { qty: rest });
     await store.insert('usage_log', {
-      product_name: p.name, category: p.category, qty: used, unit: p.unit,
+      product_name: p.name, category: catsOf(p)[0], categories: catsOf(p), qty: used, unit: p.unit,
       used_at: new Date().toISOString(),
     });
     // La quantità usata va nella lista della spesa
-    await addToShopping({ name: p.name, qty: used, unit: p.unit, category: p.category });
+    await addToShopping({ name: p.name, qty: used, unit: p.unit, category: catsOf(p)[0] });
     const otherLots = data.lots.filter(l => l.product_id === p.id && l.id !== lot.id).length;
     if (rest <= 0 && otherLots === 0) await store.remove('products', p.id);
     return `Usato ${fmtQty(used)} ${p.unit} di ${p.name} · aggiunto alla spesa 🛒`;
@@ -692,18 +713,20 @@ function onEdit(pid) {
   const m = openModal(`
     <h3>Modifica prodotto</h3>
     <form id="edit-form">
-      <label>Nome<input name="pname" required value="${esc(p.name)}"></label>
       <div class="row2">
-        <label>Categoria<select name="category">${catOptions(p.category)}</select></label>
+        <label>Nome<input name="pname" required value="${esc(p.name)}"></label>
         <label>Unità<select name="unit">${unitOptions(p.unit)}</select></label>
       </div>
+      <label>Categorie <span class="hint">(anche più di una)</span></label>
+      <div class="chips" id="edit-cats"></div>
       <div class="edit-lots">
-        <div class="sub">Lotti: quantità e scadenza (spunta 🗑 per eliminarne uno)</div>
+        <div class="sub">Lotti: quantità, scadenza<span class="fz-col"> e data di congelamento</span> (spunta 🗑 per eliminarne uno)</div>
         ${lots.map(l => `
           <div class="edit-lot" data-lot="${l.id}">
-            <input type="number" min="0" step="any" name="qty" value="${l.qty}" aria-label="Quantità">
-            <input type="date" name="expiry" value="${l.expiry || ''}" aria-label="Scadenza">
-            <label class="check" style="margin:0"><input type="checkbox" name="del"> 🗑</label>
+            <label class="mini">Quantità<input type="number" min="0" step="any" name="qty" value="${l.qty}"></label>
+            <label class="mini">Scadenza<input type="date" name="expiry" value="${l.expiry || ''}"></label>
+            <label class="mini fz-col">Congelato il<input type="date" name="frozen" value="${l.frozen_at || ''}"></label>
+            <label class="check del-lot"><input type="checkbox" name="del"> 🗑</label>
           </div>`).join('')}
       </div>
       <div class="modal-foot">
@@ -711,6 +734,10 @@ function onEdit(pid) {
         <button type="submit" class="btn btn-dark">Salva modifiche</button>
       </div>
     </form>`);
+  const picker = m.querySelector('#edit-cats');
+  const showFz = list => m.querySelectorAll('.fz-col').forEach(x => { x.hidden = !list.includes(FROZEN); });
+  initPicker(picker, catsOf(p), showFz);
+  showFz(catsOf(p));
 
   m.querySelector('#edit-form').addEventListener('submit', async ev => {
     ev.preventDefault();
@@ -724,18 +751,24 @@ function onEdit(pid) {
       id: row.dataset.lot,
       qty: Number(row.querySelector('[name=qty]').value),
       expiry: row.querySelector('[name=expiry]').value || null,
+      frozen_at: row.querySelector('[name=frozen]').value || null,
       del: row.querySelector('[name=del]').checked,
     }));
-    const category = el('category').value, unit = el('unit').value;
+    const categories = pickerValue(picker), unit = el('unit').value;
+    if (!categories.length) return toast('Scegli almeno una categoria.', true);
+    const fz = categories.includes(FROZEN);
+    rows.forEach(r => { if (!fz) r.frozen_at = null; });
     closeModal();
     await act(async () => {
-      await store.update('products', pid, { name, category, unit });
+      await store.update('products', pid, { name, category: categories[0], categories, unit });
       let left = 0;
       for (const r of rows) {
         if (r.del || !(r.qty > 0)) { await store.remove('lots', r.id); continue; }
         left++;
         const old = lots.find(l => l.id === r.id);
-        if (Number(old.qty) !== r.qty || (old.expiry || null) !== r.expiry) await store.update('lots', r.id, { qty: r.qty, expiry: r.expiry });
+        if (Number(old.qty) !== r.qty || (old.expiry || null) !== r.expiry || (old.frozen_at || null) !== r.frozen_at) {
+          await store.update('lots', r.id, { qty: r.qty, expiry: r.expiry, frozen_at: r.frozen_at });
+        }
       }
       if (!left) await store.remove('products', pid);
     }, 'Modifiche salvate');
@@ -751,7 +784,7 @@ async function onShopAdd(e) {
   const unit = qty ? $('#shop-unit').value : (p?.unit || null);
   if (!name) return;
   $('#shop-name').value = ''; $('#shop-qty').value = '';
-  await act(() => addToShopping({ name: p?.name || name, qty, unit, category: p?.category || null }), `${name} aggiunto alla lista`);
+  await act(() => addToShopping({ name: p?.name || name, qty, unit, category: p ? catsOf(p)[0] : null }), `${name} aggiunto alla lista`);
   $('#shop-name').focus();
 }
 
@@ -760,8 +793,8 @@ function restockModal(item) {
   return new Promise(resolve => {
     const p = productByName(item.name);
     const unit = item.unit || p?.unit || 'pz';
-    const category = item.category || p?.category || 'Altro';
-    const tool = !catOf(category).food;
+    const startCats = p ? catsOf(p) : [item.category || 'Altro'];
+    const tool = !isFoodCats(startCats);
     const m = openModal(`
       <h3>📦 Metti in dispensa: ${esc(item.name)}</h3>
       <p class="sub">Conferma la quantità che hai comprato e la data di scadenza.</p>
@@ -770,8 +803,10 @@ function restockModal(item) {
           <label>Quantità comprata *<input name="qty" type="number" min="0.01" step="any" required inputmode="decimal" value="${Number(item.qty) > 0 ? item.qty : 1}"></label>
           <label>Unità<select name="unit">${unitOptions(unit)}</select></label>
         </div>
+        <label>Categorie <span class="hint">(anche più di una)</span></label>
+        <div class="chips" id="restock-cats"></div>
         <div class="row2">
-          <label>Categoria<select name="category">${catOptions(category)}</select></label>
+          <label class="fz-col">Data di congelamento<input name="frozen" type="date" value="${isoDay(new Date())}"></label>
           <label>Data di scadenza<input name="expiry" type="date" value="${tool ? '' : plusDays(7)}" ${tool ? 'disabled' : ''}></label>
         </div>
         <label class="check"><input type="checkbox" name="noexp" ${tool ? 'checked' : ''}> Nessuna scadenza</label>
@@ -786,10 +821,20 @@ function restockModal(item) {
     const finish = v => { if (done) return; done = true; resolve(v); };
     m.parentElement._onClose = () => finish(null);
     el('noexp').addEventListener('change', () => { el('expiry').disabled = el('noexp').checked; if (!el('noexp').checked && !el('expiry').value) el('expiry').value = plusDays(7); });
-    el('category').addEventListener('change', () => {
-      const t = !catOf(el('category').value).food;
-      el('noexp').checked = t; el('noexp').dispatchEvent(new Event('change'));
-    });
+    const picker = m.querySelector('#restock-cats');
+    let touched = false;
+    el('expiry').addEventListener('input', () => { touched = true; });
+    const onCats = list => {
+      const fz = list.includes(FROZEN);
+      m.querySelectorAll('.fz-col').forEach(x => { x.hidden = !fz; });
+      const t = !isFoodCats(list.length ? list : ['Altro']);
+      if (el('noexp').checked !== t) { el('noexp').checked = t; el('noexp').dispatchEvent(new Event('change')); }
+      if (fz && !touched && !el('noexp').checked) el('expiry').value = addDaysTo(el('frozen').value || isoDay(new Date()), FROZEN_DAYS);
+    };
+    el('frozen').addEventListener('change', () => { if (!touched && el('frozen').value) el('expiry').value = addDaysTo(el('frozen').value, FROZEN_DAYS); });
+    initPicker(picker, startCats, onCats);
+    m.querySelectorAll('.fz-col').forEach(x => { x.hidden = !startCats.includes(FROZEN); });
+    if (startCats.includes(FROZEN) && !tool) el('expiry').value = addDaysTo(isoDay(new Date()), FROZEN_DAYS);
     f.addEventListener('submit', ev => {
       ev.preventDefault();
       const qty = Number(el('qty').value);
@@ -797,7 +842,10 @@ function restockModal(item) {
       const expiry = noexp ? null : el('expiry').value;
       if (!(qty > 0)) return toast('Quantità non valida.', true);
       if (!noexp && !expiry) return toast('Inserisci la scadenza o spunta "Nessuna scadenza".', true);
-      finish({ qty, unit: el('unit').value, category: el('category').value, expiry });
+      const categories = pickerValue(picker);
+      if (!categories.length) return toast('Scegli almeno una categoria.', true);
+      const frozen_at = categories.includes(FROZEN) ? (el('frozen').value || isoDay(new Date())) : null;
+      finish({ qty, unit: el('unit').value, categories, expiry, frozen_at });
       closeModal();
     });
   });
@@ -844,7 +892,7 @@ async function onShareText() {
 /* ═════════════ Ricette → prompt per Gemini ═════════════ */
 function onRecipes() {
   const food = data.products
-    .filter(p => catOf(p.category).food)
+    .filter(p => isFoodCats(catsOf(p)))
     .map(p => ({ p, lots: lotsOf(p.id) }))
     .filter(x => x.lots.length)
     .sort((a, b) => (a.lots[0].expiry || '9999').localeCompare(b.lots[0].expiry || '9999'));
@@ -856,7 +904,7 @@ function onRecipes() {
       const s = lotStatus(lots[0]);
       const tot = round2(lots.reduce((a, l) => a + Number(l.qty), 0));
       return `<label class="recipe-item"><input type="checkbox" value="${i}" ${s.rank <= 2 ? 'checked' : ''}>
-        <span style="flex:1">${catOf(p.category).emoji} ${esc(p.name)} <span class="muted">· ${fmtQty(tot)} ${esc(p.unit)}</span></span><span class="pill ${s.cls}">${s.label}</span></label>`;
+        ${catIcon(catsOf(p)[0])}<span style="flex:1">${esc(p.name)} <span class="muted">· ${fmtQty(tot)} ${esc(p.unit)}</span></span><span class="pill ${s.cls}">${s.label}</span></label>`;
     }).join('')}</div>
     <form id="rec-opts">
       <div class="row2">
@@ -1122,20 +1170,57 @@ function toast(msg, isErr) {
 }
 
 /* ═════════════ Setup UI ═════════════ */
-function catOptions(sel) {
-  return CATS.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${c.emoji} ${c.id}</option>`).join('');
+/* Selettore categorie a "chip": se ne possono scegliere più di una, la prima toccata è la principale */
+function catChips() {
+  return CATS.map(c => `<button type="button" class="chip" data-cat="${c.id}" style="--c:${c.color};--b:${c.bg}"><i data-lucide="${c.icon}"></i>${c.id}</button>`).join('');
 }
+function initPicker(el, selected, onChange) {
+  el.innerHTML = catChips();
+  el._sel = [...selected];
+  const paint = () => el.querySelectorAll('.chip').forEach(ch => {
+    const i = el._sel.indexOf(ch.dataset.cat);
+    ch.classList.toggle('on', i >= 0);
+    ch.classList.toggle('main', i === 0 && el._sel.length > 1);
+  });
+  el._set = list => { el._sel = [...list]; paint(); };
+  if (!el._bound) {
+    el._bound = true;
+    el.addEventListener('click', e => {
+      const ch = e.target.closest('.chip');
+      if (!ch) return;
+      const id = ch.dataset.cat;
+      el._sel = el._sel.includes(id) ? el._sel.filter(x => x !== id) : [...el._sel, id];
+      paint();
+      if (el._onChange) el._onChange(el._sel);
+    });
+  }
+  el._onChange = onChange;
+  paint();
+  icons();
+}
+const pickerValue = el => [...(el._sel || [])];
 function unitOptions(sel) {
   return UNITS.map(([v, l]) => `<option value="${v}" ${v === sel ? 'selected' : ''}>${l}</option>`).join('');
 }
 
 function fillSelects() {
-  $('#f-cat').innerHTML = catOptions('Carne e Pesce');
+  initPicker($('#f-cats'), ['Carne e Pesce'], onFormCatsChange);
+  $('#f-frozen').value = isoDay(new Date());
   $('#f-unit').innerHTML = unitOptions('pz');
   $('#shop-unit').innerHTML = unitOptions('pz');
   $('#cat-filter').innerHTML = '<option value="">Tutte le categorie</option>' +
-    CATS.map(c => `<option value="${c.id}">${c.emoji} ${c.id}</option>`).join('');
+    CATS.map(c => `<option value="${c.id}">${c.id}</option>`).join('');
   $('#f-exp').value = plusDays(7);
+}
+
+let expTouched = false;
+function onFormCatsChange(list) {
+  setNoExp(!isFoodCats(list.length ? list : ['Altro']));
+  const fz = list.includes(FROZEN);
+  $('#f-frozen-wrap').hidden = !fz;
+  if (fz && !expTouched && !$('#f-noexp').checked) {
+    $('#f-exp').value = addDaysTo($('#f-frozen').value || isoDay(new Date()), FROZEN_DAYS);
+  }
 }
 
 function setNoExp(on) {
@@ -1158,8 +1243,7 @@ function setTab(tab) {
 
 function bindEvents() {
   // Login
-  $('#login-form').addEventListener('submit', e => { e.preventDefault(); doAuth(false); });
-  $('#signup-btn').addEventListener('click', () => doAuth(true));
+  $('#login-form').addEventListener('submit', e => { e.preventDefault(); doAuth(); });
   $('#btn-logout').addEventListener('click', async () => {
     if (!(await confirmBox('Vuoi uscire?', 'Esci'))) return;
     if (sb) await sb.auth.signOut();
@@ -1181,11 +1265,14 @@ function bindEvents() {
     setNoExp(e.target.checked);
     if (!e.target.checked && !$('#f-exp').value) $('#f-exp').value = plusDays(7);
   });
-  $('#f-cat').addEventListener('change', e => setNoExp(!catOf(e.target.value).food));
+  $('#f-exp').addEventListener('input', () => { expTouched = true; });
+  $('#f-frozen').addEventListener('change', () => {
+    if (!expTouched && $('#f-frozen').value) $('#f-exp').value = addDaysTo($('#f-frozen').value, FROZEN_DAYS);
+  });
   // Se scrivo/scelgo un prodotto esistente, precompilo categoria e unità
   $('#f-name').addEventListener('input', e => {
     const p = productByName(e.target.value);
-    if (p) { $('#f-cat').value = p.category; $('#f-unit').value = p.unit; setNoExp(!catOf(p.category).food); }
+    if (p) { $('#f-cats')._set(catsOf(p)); $('#f-unit').value = p.unit; onFormCatsChange(catsOf(p)); }
   });
   $('#jump-add').addEventListener('click', () => {
     $('#add-form').scrollIntoView({ behavior: 'smooth', block: 'start' });

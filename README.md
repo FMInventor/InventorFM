@@ -15,7 +15,7 @@ Frontend statico su **GitHub Pages**, dati su **Supabase**.
 
 Con `config.js` vuoto l'app parte in **modalità demo** (dati solo nel browser).
 
-## Aggiornare dalla versione 1
+## Aggiornare da una versione precedente
 
 1. Supabase → **SQL Editor → New query**: incolla tutto il nuovo `supabase.sql` e premi **Run**
    (non cancella i dati, aggiunge solo le novità).
@@ -26,6 +26,9 @@ Con `config.js` vuoto l'app parte in **modalità demo** (dati solo nel browser).
 - **Usa**: la quantità consumata viene aggiunta alla lista della spesa (se c'è già, si somma).
 - **Lista della spesa → In dispensa**: conferma quantità comprata e scadenza, e il prodotto torna
   nell'inventario. Se compri meno del previsto, il resto rimane in lista.
+- **Categorie**: se ne possono scegliere più di una (es. Surgelati + Carne e Pesce); la prima scelta è la principale.
+- **Surgelati**: compare la data di congelamento; la scadenza viene proposta a 3 mesi (modificabile).
+- **Accesso**: non c'è il pulsante per creare account. Nuovi utenti si aggiungono da Supabase → Authentication → Users → Add user.
 - **Colori**: rosso = scade entro 2 giorni, arancione = entro 5 giorni, bordeaux = scaduto.
 - **Ricette**: scegli gli ingredienti e copia il testo pronto da incollare in Gemini.
 - **Notifiche** (campanella): una notifica per ogni scadenza, quando entra nei 5 giorni, nei 2 giorni,

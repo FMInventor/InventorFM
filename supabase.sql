@@ -1,8 +1,8 @@
 -- ═══════════════════════════════════════════════════════════════
---  Smart Pantry Pro — schema database (v2)
+--  Smart Pantry Pro — schema database (v3)
 --  Incolla tutto in Supabase → SQL Editor → New query → Run.
 --  Si può rieseguire quante volte vuoi: NON cancella i dati,
---  aggiunge solo ciò che manca (aggiorna anche la versione 1).
+--  aggiunge solo ciò che manca (aggiorna anche le versioni precedenti).
 -- ═══════════════════════════════════════════════════════════════
 
 -- Prodotti (un prodotto può avere più lotti con scadenze diverse)
@@ -53,6 +53,12 @@ create table if not exists public.shopping (
 alter table public.shopping add column if not exists qty      numeric;
 alter table public.shopping add column if not exists unit     text;
 alter table public.shopping add column if not exists category text;
+
+-- v3: più categorie per prodotto (la prima è la principale) e data di congelamento
+alter table public.products  add column if not exists categories text[];
+alter table public.lots      add column if not exists frozen_at  date;
+alter table public.usage_log add column if not exists categories text[];
+update public.products set categories = array[category] where categories is null;
 
 -- v2: link segreto per la sezione Mother (lista visibile senza login)
 create table if not exists public.share_links (

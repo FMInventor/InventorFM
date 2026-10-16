@@ -383,3 +383,37 @@ body.mother-mode { background: #fdf8f3; padding-bottom: 0 !important; }
   .m-qty { font-size: 18px; }
   .m-card { padding: 22px 16px; border-radius: 20px; }
 }
+
+/* ── v3: categorie multiple, icone, congelamento ── */
+.hint { color: var(--soft); font-weight: 400; font-size: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 11px; border-radius: 999px;
+  border: 1px solid var(--line); background: #fff; color: var(--text-2);
+  font: 500 12.5px var(--font); cursor: pointer; transition: background .12s, border-color .12s;
+}
+.chip svg.lucide { width: 14px; height: 14px; color: var(--c); }
+.chip:hover { border-color: #cbd5e1; }
+.chip.on { background: var(--b); border-color: var(--c); color: var(--c); font-weight: 600; }
+.chip.main::after { content: 'principale'; font-size: 10px; font-weight: 600; background: var(--c); color: #fff; padding: 1px 6px; border-radius: 99px; }
+.cat-ic {
+  width: 32px; height: 32px; border-radius: 10px; flex: none;
+  display: inline-grid; place-items: center; background: var(--b); color: var(--c);
+}
+.cat-ic svg.lucide { width: 17px; height: 17px; }
+.shop-item .cat-ic { width: 30px; height: 30px; }
+.recipe-item .cat-ic { width: 26px; height: 26px; border-radius: 8px; }
+.recipe-item .cat-ic svg.lucide { width: 14px; height: 14px; }
+.m-cat .cat-ic { width: 30px; height: 30px; }
+.frozen-info { display: flex; align-items: center; gap: 4px; color: #0e7490; font-size: 12px; margin-top: 3px; }
+.frozen-info svg.lucide { width: 13px; height: 13px; }
+.edit-lot { grid-template-columns: 1fr 1.3fr 1.3fr auto; align-items: end; }
+.edit-lot:has(.fz-col[hidden]) { grid-template-columns: 1fr 1.3fr auto; }
+.edit-lot .mini { margin: 0; font-size: 11.5px; color: var(--muted); }
+.edit-lot .mini input { margin-top: 3px; }
+.edit-lot .del-lot { margin: 0 0 10px; }
+@media (max-width: 700px) {
+  .edit-lot, .edit-lot:has(.fz-col[hidden]) { grid-template-columns: 1fr 1fr; }
+  .chip { padding: 8px 11px; font-size: 13px; }
+}
+#add-form, .grp-head { scroll-margin-top: 84px; }
