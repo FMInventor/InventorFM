@@ -11,7 +11,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
 
@@ -63,6 +63,7 @@
       <button class="btn btn-purple" id="btn-recipes" title="Prompt per Gemini con gli ingredienti"><i data-lucide="sparkles"></i><span>Ricette</span></button>
       <button class="btn btn-icon" id="btn-notify" title="Notifiche scadenze"><i data-lucide="bell-off"></i></button>
       <button class="btn btn-icon" id="btn-logout" title="Esci" hidden><i data-lucide="log-out"></i></button>
+      <button class="btn btn-icon" id="btn-menu" title="Menu" aria-label="Menu"><i data-lucide="menu"></i></button>
       <input type="file" id="restore-file" accept="application/json,.json" hidden>
     </div>
   </header>
@@ -146,7 +147,7 @@
         <div class="card-head">
           <div>
             <h2><i data-lucide="shopping-cart" class="h-ic"></i>Lista della Spesa</h2>
-            <p class="sub">Quando usi un prodotto, la quantità consumata viene aggiunta qui. Dopo la spesa premi <b>In dispensa</b> per rimetterlo nell'inventario.</p>
+            <p class="sub">Quando usi un prodotto, la quantità consumata viene aggiunta qui. <b>Seleziona con la casella</b> i prodotti da comprare e premi <b>Genera lista Mother</b>. Dopo la spesa premi <b>In dispensa</b> per rimetterli nell'inventario.</p>
           </div>
         </div>
         <form id="shop-form" class="shop-form">
@@ -155,9 +156,13 @@
           <select id="shop-unit" aria-label="Unità"></select>
           <button class="btn btn-dark" type="submit"><i data-lucide="plus"></i>Aggiungi</button>
         </form>
+        <div class="shop-tools" id="shop-tools" hidden>
+          <label class="check"><input type="checkbox" id="shop-select-all"> Seleziona tutti</label>
+          <button class="btn btn-purple" id="gen-mother" type="button"><i data-lucide="heart"></i><span>Genera lista Mother (<b id="gen-count">0</b>)</span></button>
+        </div>
         <ul id="shop-list" class="shop-list"></ul>
         <div class="shop-foot">
-          <button class="link-btn" id="shop-all-in" type="button"><i data-lucide="package-check"></i>Metti in dispensa tutti i presi</button>
+          <button class="link-btn" id="shop-all-in" type="button"><i data-lucide="package-check"></i>Metti in dispensa i presi da Mother</button>
           <button class="link-btn" id="shop-clear-done" type="button"><i data-lucide="trash-2"></i>Rimuovi i presi</button>
         </div>
       </div>
@@ -168,8 +173,8 @@
       <div class="mother-share card pad">
         <div class="share-text">
           <h2><i data-lucide="heart" class="h-ic"></i>Sezione Mother</h2>
-          <p class="sub">La lista della spesa in versione grande e semplicissima. Si aggiorna da sola ogni volta che la lista cambia.
-            Invia il link: si apre dal telefono <b>senza password</b> e mostra solo la lista.</p>
+          <p class="sub">Qui compare solo la lista che hai generato da <b>Lista della Spesa</b> (casella + "Genera lista Mother").
+            Se la rigeneri, i prodotti già segnati come presi restano. Invia il link: si apre <b>senza password</b> e si aggiorna da solo.</p>
         </div>
         <div class="share-btns">
           <button class="btn btn-purple" id="mother-share"><i data-lucide="send"></i>Invia link a Mother</button>
@@ -197,6 +202,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/lucide@0.460.0/dist/umd/lucide.min.js"></script>
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

@@ -417,3 +417,97 @@ body.mother-mode { background: #fdf8f3; padding-bottom: 0 !important; }
   .chip { padding: 8px 11px; font-size: 13px; }
 }
 #add-form, .grp-head { scroll-margin-top: 84px; }
+
+/* ── v4: selezione per Mother ── */
+.shop-tools {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  margin-top: 16px; padding: 10px 12px; background: #f5f3ff; border: 1px solid #e4dcff; border-radius: 12px;
+}
+.shop-tools label.check { margin: 0; color: var(--text-2); font-weight: 500; }
+.shop-tools input[type=checkbox] { width: 18px; height: 18px; }
+.shop-item.sel { border-color: #c4b5fd; background: #faf8ff; }
+.shop-item .sel-box { accent-color: var(--purple); }
+.tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 99px; margin-left: 4px; white-space: nowrap; }
+.tag-m { background: #ede9fe; color: #6d28d9; }
+.tag-ok { background: #dcfce7; color: #15803d; }
+.shop-item.done .name { text-decoration: none; color: var(--text); }
+
+/* ── v4: menu ── */
+#btn-menu { display: none; }
+.menu-list { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.menu-item {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  background: #f8fafc; border: 1px solid var(--line-soft); border-radius: 14px; padding: 12px; cursor: pointer;
+  font: 500 15px var(--font); color: var(--text);
+}
+.menu-item small { display: block; color: var(--muted); font-size: 12.5px; font-weight: 400; margin-top: 2px; }
+.menu-ic { width: 38px; height: 38px; border-radius: 11px; background: var(--indigo-bg); color: var(--indigo); display: grid; place-items: center; flex: none; }
+.menu-ic svg.lucide { width: 19px; height: 19px; }
+
+/* ── v4: telefono ── */
+@media (max-width: 700px) {
+  /* 16px evita lo zoom automatico di iPhone quando tocchi un campo */
+  input, select, textarea { font-size: 16px; }
+  .filters input, .filters select { font-size: 15px; }
+
+  /* intestazione: solo logo, Ricette e Menu */
+  #btn-menu { display: inline-flex; }
+  #btn-backup, #btn-restore, #btn-text, #btn-notify, #btn-logout { display: none !important; }
+  .actions .btn { padding: 9px; }
+  .demo-banner { font-size: 12px; padding: 6px 16px; }
+
+  /* finestre come "foglio" dal basso */
+  .modal-back { place-items: end stretch; padding: 0; }
+  .modal {
+    max-width: none; border-radius: 22px 22px 0 0; max-height: 92vh;
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); animation: sheet .2s;
+  }
+  .modal::before { content: ''; display: block; width: 40px; height: 4px; border-radius: 4px; background: #d6dbe4; margin: -6px auto 12px; }
+  .modal-foot { position: sticky; bottom: calc(-18px - env(safe-area-inset-bottom)); background: #fff; padding: 10px 0 4px; margin-top: 14px; }
+  .modal-foot .btn { flex: 1; padding: 12px 10px; }
+  .modal-foot .btn-light:first-child:not(:only-child) { flex: 0 0 auto; }
+
+  /* prodotti più compatti */
+  .prod { padding: 13px 12px 12px; }
+  .prod-name { font-size: 15px; gap: 6px; }
+  .edit-btn span { display: none; }
+  .edit-btn { padding: 6px; }
+  .cat-ic { width: 30px; height: 30px; }
+  .lot { padding: 8px 8px 8px 10px; gap: 6px; }
+  .lot > div:first-child { width: 100%; }
+  .use-btn { padding: 8px 14px; font-size: 13px; }
+  .row2 { gap: 10px; }
+
+  /* lista spesa */
+  .shop-tools { position: sticky; top: 62px; z-index: 5; box-shadow: 0 4px 12px rgba(109,74,255,.08); }
+  .shop-tools .btn { flex: 1; padding: 11px; }
+  .shop-item { align-items: center; }
+  .shop-item .sel-box { width: 22px; height: 22px; }
+  .shop-item .meta { line-height: 1.6; }
+  .tag { margin-left: 0; }
+  .shop-foot { flex-direction: column; align-items: flex-start; }
+
+  .mother-share { padding: 16px 14px; }
+  .share-btns { width: 100%; justify-content: space-between; }
+  .radar-box { height: 280px; }
+}
+@media (max-width: 380px) {
+  .brand-title { font-size: 14px; }
+  .brand-icon { width: 30px; height: 30px; }
+  .stat-val { font-size: 18px; }
+  .stat-label { font-size: 10px; }
+  .qty-chip { font-size: 11px; padding: 3px 6px; }
+  .m-item { font-size: 19px; min-height: 64px; }
+}
+@keyframes sheet { from { transform: translateY(40px); opacity: 0; } }
+.shop-tools label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+@media (max-width: 700px) {
+  /* statistiche compatte: 4 riquadri in una riga */
+  .stats { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .stats > :first-child { grid-column: span 4; padding: 10px 12px; }
+  .stats > :first-child .stat-ic { width: 32px; height: 32px; }
+  .stats > :not(:first-child) { flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px; }
+  .stats > :not(:first-child) .stat-ic { display: none; }
+  .stats .stat-label { font-size: 9.5px; line-height: 1.25; letter-spacing: .02em; }
+  .stats .stat-val { font-size: 20px; margin-top: 0; }
+}

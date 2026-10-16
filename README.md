@@ -34,11 +34,8 @@ Con `config.js` vuoto l'app parte in **modalità demo** (dati solo nel browser).
 - **Notifiche** (campanella): una notifica per ogni scadenza, quando entra nei 5 giorni, nei 2 giorni,
   il giorno stesso e quando scade. Arrivano quando il sito è aperto o viene riaperto.
   Su iPhone servono iOS 16.4+ e il sito aggiunto alla schermata Home.
-- **Mother**: la lista della spesa in versione grande e semplice. "Invia link a Mother" crea un link
-  che si apre senza password, mostra solo la lista, permette di spuntare i prodotti presi e si
-  aggiorna da sola. "Nuovo link" disattiva quello vecchio.
-
-## Note
-
-- Il progetto Supabase gratuito va in pausa dopo ~7 giorni senza uso: si riattiva dalla dashboard.
-- **Salva Backup** scarica un file JSON con tutti i dati; **Ripristina** lo ricarica (sostituisce i dati attuali).
+- **Mother**: in Lista della Spesa selezioni i prodotti con la casella e premi **Genera lista Mother**.
+  Nella sezione Mother (e nel link condiviso, che si apre senza password) compare solo quella lista,
+  grande e semplice, e si aggiorna da sola. Se rigeneri la lista, i prodotti che Mother aveva già
+  segnato come presi restano. "Nuovo link" disattiva quello vecchio.
+- **Telefono**: barra in basso, menu ☰ con backup/notifiche/esci, finestre che salgono dal basso.

@@ -8,6 +8,7 @@ const CATS = [
   { id: 'Frutta e Verdura', icon: 'apple',           color: '#15803d', bg: '#dcfce7', food: true },
   { id: 'Pane e Cereali',   icon: 'wheat',           color: '#b45309', bg: '#fef3c7', food: true },
   { id: 'Carne e Pesce',    icon: 'beef',            color: '#b91c1c', bg: '#fee2e2', food: true },
+  { id: 'Pollo',            icon: 'drumstick',       color: '#b45309', bg: '#fef9c3', food: true },
   { id: 'Latticini e Uova', icon: 'milk',            color: '#0369a1', bg: '#e0f2fe', food: true },
   { id: 'Surgelati',        icon: 'snowflake',       color: '#0e7490', bg: '#cffafe', food: true },
   { id: 'Conserve',         icon: 'cylinder',        color: '#9a3412', bg: '#ffedd5', food: true },
@@ -92,6 +93,7 @@ function makeSupabaseStore(sb) {
     async update(t, id, patch) { return ok(await sb.from(t).update(patch).eq('id', id).select().single()); },
     async remove(t, id) { ok(await sb.from(t).delete().eq('id', id)); },
     async removeMany(t, ids) { if (ids.length) ok(await sb.from(t).delete().in('id', ids)); },
+    async updateMany(t, ids, patch) { if (ids.length) ok(await sb.from(t).update(patch).in('id', ids)); },
     async clear(t) { ok(await sb.from(t).delete().not('id', 'is', null)); },
     async replaceAll(nd) {
       for (const t of ['lots', 'usage_log', 'shopping', 'products']) await this.clear(t);
@@ -138,6 +140,7 @@ function makeLocalStore() {
       save();
     },
     async removeMany(t, ids) { const s = new Set(ids); d[t] = d[t].filter(x => !s.has(x.id)); save(); },
+    async updateMany(t, ids, patch) { const s = new Set(ids); d[t].forEach(x => { if (s.has(x.id)) Object.assign(x, patch); }); save(); },
     async clear(t) { d[t] = []; if (t === 'products') d.lots = []; save(); },
     async replaceAll(nd) { d = empty(); for (const t of TABLES) d[t] = nd[t] || []; save(); },
   };
@@ -295,6 +298,13 @@ async function act(fn, okMsg) {
   await refresh();
 }
 
+/* Salvataggio rapido per tocchi ripetuti (caselle): non blocca, poi riallinea */
+function quickSave(t, id, patch) {
+  store.update(t, id, patch)
+    .catch(e => toast('Modifica non salvata: ' + translateErr(e), true))
+    .finally(() => scheduleRefresh());
+}
+
 const productByName = name => data.products.find(x => norm(x.name) === norm(name));
 
 /* Aggiunge al magazzino (crea il prodotto o un nuovo lotto) */
@@ -351,7 +361,10 @@ function render() {
   renderInventory();
   renderWeeks();
   renderShopping();
-  renderMother($('#mother-app-list'), data.shopping, { updatedAt: new Date() });
+  renderMother($('#mother-app-list'), data.shopping.filter(x => x.in_mother), {
+    updatedAt: new Date(),
+    emptyText: 'Nessuna lista ancora. Vai su <b>Lista della Spesa</b>, seleziona i prodotti con la casella e premi <b>Genera lista Mother</b>.',
+  });
   $('#product-names').innerHTML = data.products.map(p => `<option value="${esc(p.name)}">`).join('');
   icons();
 }
@@ -431,7 +444,7 @@ function productCard({ p, lots, st }) {
         </div>
       </div>
       <div class="prod-actions">
-        <button class="link-btn edit-btn" data-edit="${p.id}"><i data-lucide="pencil"></i>Modifica</button>
+        <button class="link-btn edit-btn" data-edit="${p.id}" aria-label="Modifica"><i data-lucide="pencil"></i><span>Modifica</span></button>
         <button class="link-btn del-btn" data-del="${p.id}" title="Elimina prodotto" aria-label="Elimina"><i data-lucide="x"></i></button>
       </div>
     </div>
@@ -516,15 +529,22 @@ function renderShopping() {
   const open = data.shopping.filter(s => !s.done).length;
   $$('.shop-badge').forEach(b => { b.textContent = open; b.classList.toggle('zero', open === 0); });
   const list = [...data.shopping].sort((a, b) => (a.done - b.done) || a.created_at.localeCompare(b.created_at));
+  const nSel = data.shopping.filter(x => x.selected).length;
+  $('#gen-count').textContent = nSel;
+  $('#shop-select-all').checked = list.length > 0 && nSel === list.length;
+  $('#shop-select-all').indeterminate = nSel > 0 && nSel < list.length;
+  $('#shop-tools').hidden = !list.length;
   $('#shop-list').innerHTML = list.length ? list.map(s => {
     const c = catOf(shopCategory(s));
     const q = qtyText(s.qty, s.unit);
-    return `<li class="shop-item ${s.done ? 'done' : ''}">
-      <input type="checkbox" data-shop-toggle="${s.id}" ${s.done ? 'checked' : ''} aria-label="Preso">
+    return `<li class="shop-item ${s.selected ? 'sel' : ''} ${s.done ? 'done' : ''}">
+      <input type="checkbox" class="sel-box" data-shop-select="${s.id}" ${s.selected ? 'checked' : ''} aria-label="Seleziona per la lista Mother">
       ${catIcon(c.id)}
       <div class="info">
         <div class="name">${esc(s.name)}</div>
-        <div class="meta">${esc(c.id)}${s.note ? ` · ${esc(s.note)}` : ''}</div>
+        <div class="meta">${esc(c.id)}${s.note ? ` · ${esc(s.note)}` : ''}
+          ${s.in_mother && !s.done ? '<span class="tag tag-m">In lista Mother</span>' : ''}
+          ${s.done ? '<span class="tag tag-ok">✓ Preso da Mother</span>' : ''}</div>
       </div>
       ${q ? `<span class="qty-chip">${esc(q)}</span>` : ''}
       <button class="btn restock-btn" data-restock="${s.id}" title="Aggiorna nell'inventario"><i data-lucide="package-plus"></i><span>In dispensa</span></button>
@@ -537,7 +557,7 @@ function renderShopping() {
 /* ── Mother (usata sia nella scheda dell'app sia nella pagina condivisa) ── */
 const CHECK_SVG = '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 
-function renderMother(target, items, { updatedAt, error } = {}) {
+function renderMother(target, items, { updatedAt, error, emptyText } = {}) {
   if (!target) return;
   const todo = items.filter(s => !s.done);
   const done = items.filter(s => s.done);
@@ -555,7 +575,9 @@ function renderMother(target, items, { updatedAt, error } = {}) {
 
   let body;
   if (!total) {
-    body = `<div class="m-empty"><div class="big">🎉</div><p>Niente da comprare!</p><span>La lista è vuota.</span></div>`;
+    body = emptyText
+      ? `<div class="m-empty"><div class="big">📝</div><p>La lista è vuota</p><span>${emptyText}</span></div>`
+      : `<div class="m-empty"><div class="big">🎉</div><p>Niente da comprare!</p><span>La lista è vuota.</span></div>`;
   } else {
     const groups = CATS.map(c => ({ c, list: todo.filter(s => shopCategory(s) === c.id) })).filter(g => g.list.length);
     body = `
@@ -862,9 +884,37 @@ async function restockItem(item) {
   return true;
 }
 
+/* Genera la lista Mother con i prodotti selezionati.
+   I prodotti che Mother aveva già segnato come presi NON vengono persi. */
+async function onGenerateMother() {
+  const sel = data.shopping.filter(s => s.selected);
+  const kept = data.shopping.filter(s => s.in_mother && s.done && !s.selected);
+  if (!sel.length && !kept.length) return toast('Seleziona almeno un prodotto con la casella ☑️', true);
+  await act(async () => {
+    const toIn = [], toInKeepDone = [], toOut = [];
+    for (const s of data.shopping) {
+      const wasDone = !!(s.in_mother && s.done);
+      const inM = !!s.selected || wasDone;
+      if (!inM) { if (s.in_mother || s.done) toOut.push(s.id); }
+      else if (wasDone) { if (!s.in_mother || !s.done) toInKeepDone.push(s.id); }
+      else if (!s.in_mother || s.done) toIn.push(s.id);
+    }
+    await store.updateMany('shopping', toIn, { in_mother: true, done: false });
+    await store.updateMany('shopping', toInKeepDone, { in_mother: true, done: true });
+    await store.updateMany('shopping', toOut, { in_mother: false, done: false });
+    const n = sel.length + kept.length;
+    return `Lista Mother creata: ${n} prodott${n === 1 ? 'o' : 'i'}` + (kept.length ? ` (${kept.length} già presi conservati)` : '') + ' ❤️';
+  }, r => r);
+}
+
+async function onSelectAll(on) {
+  const ids = data.shopping.filter(s => !!s.selected !== on).map(s => s.id);
+  await act(() => store.updateMany('shopping', ids, { selected: on }));
+}
+
 async function onRestockAllDone() {
   const items = data.shopping.filter(s => s.done);
-  if (!items.length) return toast('Nessun prodotto spuntato come preso.');
+  if (!items.length) return toast('Nessun prodotto segnato come preso da Mother.');
   for (const it of items) {
     const fresh = data.shopping.find(s => s.id === it.id);
     if (fresh && !(await restockItem(fresh))) break; // Annulla = interrompe
@@ -1055,6 +1105,29 @@ async function showNotification(title, body, tag) {
   } catch (e) { console.warn('Notifica non mostrata', e); }
 }
 setInterval(() => { checkExpiryNotifications(); }, 30 * 60 * 1000);
+
+/* ═════════════ Menu (telefono) ═════════════ */
+function onMenu() {
+  const on = notifyOn();
+  const item = (id, icon, label, sub) => `<button class="menu-item" data-go="${id}"><span class="menu-ic"><i data-lucide="${icon}"></i></span>
+    <span><b>${label}</b><small>${sub}</small></span></button>`;
+  const m = openModal(`
+    <h3>Menu</h3>
+    <div class="menu-list">
+      ${item('btn-recipes', 'sparkles', 'Ricette', 'Testo per Gemini con gli ingredienti')}
+      ${item('btn-text', 'clipboard-list', 'Spesa come testo', 'Copia o condividi la lista')}
+      ${item('btn-notify', on ? 'bell-ring' : 'bell-off', on ? 'Notifiche attive' : 'Attiva notifiche', on ? 'Tocca per disattivarle' : 'Avvisi per ogni scadenza')}
+      ${item('btn-backup', 'download', 'Salva backup', 'Scarica un file con tutti i dati')}
+      ${item('btn-restore', 'upload', 'Ripristina backup', 'Ricarica i dati da un file')}
+      ${store && store.kind === 'supabase' ? item('btn-logout', 'log-out', 'Esci', 'Disconnetti questo dispositivo') : ''}
+    </div>`);
+  m.addEventListener('click', e => {
+    const b = e.target.closest('[data-go]');
+    if (!b) return;
+    closeModal();
+    $('#' + b.dataset.go).click();
+  });
+}
 
 /* ═════════════ Backup ═════════════ */
 function onBackup() {
@@ -1317,12 +1390,18 @@ function bindEvents() {
     if (rs) { const it = data.shopping.find(s => s.id === rs.dataset.restock); if (it) restockItem(it); }
   });
   $('#shop-list').addEventListener('change', e => {
-    const id = e.target.dataset.shopToggle;
-    if (id) act(() => store.update('shopping', id, { done: e.target.checked }));
+    const id = e.target.dataset.shopSelect;
+    if (!id) return;
+    const it = data.shopping.find(s => s.id === id);
+    if (it) it.selected = e.target.checked; // risposta immediata, poi salvo
+    renderShopping();
+    quickSave('shopping', id, { selected: e.target.checked });
   });
+  $('#shop-select-all').addEventListener('change', e => onSelectAll(e.target.checked));
+  $('#gen-mother').addEventListener('click', onGenerateMother);
   $('#shop-clear-done').addEventListener('click', async () => {
     const ids = data.shopping.filter(s => s.done).map(s => s.id);
-    if (!ids.length) return toast('Nessun elemento spuntato.');
+    if (!ids.length) return toast('Nessun prodotto segnato come preso da Mother.');
     if (!(await confirmBox(`Togliere ${ids.length} prodotti presi dalla lista senza aggiornare la dispensa?`, 'Rimuovi'))) return;
     act(() => store.removeMany('shopping', ids), 'Presi rimossi');
   });
@@ -1333,7 +1412,10 @@ function bindEvents() {
     const b = e.target.closest('[data-m-toggle]');
     if (!b) return;
     const it = data.shopping.find(s => s.id === b.dataset.mToggle);
-    if (it) act(() => store.update('shopping', it.id, { done: !it.done }));
+    if (!it) return;
+    it.done = !it.done; // risposta immediata
+    render();
+    quickSave('shopping', it.id, { done: it.done });
   });
   $('#mother-share').addEventListener('click', onMotherShare);
   $('#mother-reset').addEventListener('click', onMotherReset);
@@ -1345,6 +1427,7 @@ function bindEvents() {
   $('#btn-text').addEventListener('click', onShareText);
   $('#btn-recipes').addEventListener('click', onRecipes);
   $('#btn-notify').addEventListener('click', onToggleNotify);
+  $('#btn-menu').addEventListener('click', onMenu);
 
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 }

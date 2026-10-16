@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════
---  Smart Pantry Pro — schema database (v3)
+--  Smart Pantry Pro — schema database (v4)
 --  Incolla tutto in Supabase → SQL Editor → New query → Run.
 --  Si può rieseguire quante volte vuoi: NON cancella i dati,
 --  aggiunge solo ciò che manca (aggiorna anche le versioni precedenti).
@@ -60,6 +60,10 @@ alter table public.lots      add column if not exists frozen_at  date;
 alter table public.usage_log add column if not exists categories text[];
 update public.products set categories = array[category] where categories is null;
 
+-- v4: selezione nella lista della spesa e lista Mother generata
+alter table public.shopping add column if not exists selected  boolean not null default false;
+alter table public.shopping add column if not exists in_mother boolean not null default false;
+
 -- v2: link segreto per la sezione Mother (lista visibile senza login)
 create table if not exists public.share_links (
   user_id     uuid primary key default auth.uid() references auth.users (id) on delete cascade,
@@ -93,7 +97,7 @@ language sql stable security definer set search_path = public as $$
   select s.id, s.name, s.qty, s.unit, s.category, s.note, s.done, s.created_at
   from public.shopping s
   join public.share_links l on l.user_id = s.user_id
-  where l.token = p_token
+  where l.token = p_token and s.in_mother
   order by s.created_at;
 $$;
 
@@ -102,7 +106,7 @@ returns void
 language sql security definer set search_path = public as $$
   update public.shopping s set done = p_done
   from public.share_links l
-  where l.token = p_token and l.user_id = s.user_id and s.id = p_id;
+  where l.token = p_token and l.user_id = s.user_id and s.id = p_id and s.in_mother;
 $$;
 
 revoke all on function public.mother_list(uuid) from public;
