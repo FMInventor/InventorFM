@@ -612,7 +612,9 @@ function productCard({ p, lots, st }) {
     </div>
     <div class="lots">${lots.map(l => {
       const s = lotStatus(l);
-      return `<div class="lot ${s.cls}">
+      // Barra di freschezza: piena = 14 giorni o più
+      const life = s.key === 'expired' ? 100 : s.n == null ? 0 : Math.max(4, Math.min(100, Math.round(s.n / 14 * 100)));
+      return `<div class="lot ${s.cls}" style="--life:${life}%" title="${s.label}">
         <div><b>${fmtQty(l.qty)} ${esc(p.unit)}</b> • ${l.expiry ? `Scad: <b>${fmtDate(l.expiry)}</b>` : 'Senza scadenza'}${frozenInfo(l)}</div>
         <div class="lot-right">
           <span class="pill ${s.cls}">${s.label}</span>
@@ -659,8 +661,8 @@ function renderRadar() {
         labels: FOOD_CATS,
         datasets: [{
           label: 'Prodotti usati', data: counts,
-          backgroundColor: 'rgba(79,70,229,.14)', borderColor: '#4f46e5', borderWidth: 2,
-          pointBackgroundColor: '#4f46e5', pointRadius: 3,
+          backgroundColor: 'rgba(47,107,79,.16)', borderColor: '#2F6B4F', borderWidth: 2,
+          pointBackgroundColor: '#2F6B4F', pointRadius: 3,
         }],
       },
       options: {
@@ -669,9 +671,9 @@ function renderRadar() {
         scales: {
           r: {
             beginAtZero: true, suggestedMax: max,
-            ticks: { stepSize: 1, precision: 0, backdropColor: 'transparent', color: '#94a3b8', font: { size: 10 } },
-            pointLabels: { color: '#334155', font: { size: 11, weight: '600', family: 'Inter' } },
-            grid: { color: '#e4e8f0' }, angleLines: { color: '#e4e8f0' },
+            ticks: { stepSize: 1, precision: 0, backdropColor: 'transparent', color: '#97A29B', font: { size: 10 } },
+            pointLabels: { color: '#3A4640', font: { size: 12, weight: '700', family: 'Atkinson Hyperlegible' } },
+            grid: { color: '#DCE2DB' }, angleLines: { color: '#DCE2DB' },
           },
         },
       },
@@ -747,7 +749,7 @@ function renderMother(target, items, { updatedAt, error, emptyText } = {}) {
       <div class="m-count">${todo.length ? `Ancora da prendere: <b>${todo.length}</b> · Presi: ${done.length}` : 'Hai preso tutto! Grazie ❤️'}</div>
       ${groups.map(g => `<div class="m-cat">${catIcon(g.c.id)}${esc(g.c.id)}</div>
         <ul class="m-list">${g.list.map(itemHtml).join('')}</ul>`).join('')}
-      ${done.length ? `<div class="m-cat" style="color:#15803d"><span class="cat-ic" style="--c:#15803d;--b:#dcfce7"><i data-lucide="circle-check"></i></span>Già nel carrello</div>
+      ${done.length ? `<div class="m-cat" style="color:var(--basil)"><span class="cat-ic" style="--c:var(--basil);--b:var(--basil-soft)"><i data-lucide="circle-check"></i></span>Già nel carrello</div>
         <ul class="m-list">${done.map(itemHtml).join('')}</ul>` : ''}`;
   }
 

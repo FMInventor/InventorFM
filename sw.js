@@ -1,8 +1,8 @@
 // Service worker di Smart Pantry Pro
 // - Funzionamento offline: tiene in memoria le pagine e le librerie del sito
 // - Notifiche push delle scadenze (inviate dal server anche a sito chiuso)
-const CACHE = 'sp-v5';
-const CORE = ['./', './index.html', './style.css?v=5', './app.js?v=5', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'sp-v6';
+const CORE = ['./', './index.html', './style.css?v=6', './app.js?v=6', './manifest.json', './icon-192.png', './icon-512.png'];
 const CDN = /^(https:\/\/(cdn\.jsdelivr\.net|fonts\.googleapis\.com|fonts\.gstatic\.com))\//;
 
 self.addEventListener('install', e => {
