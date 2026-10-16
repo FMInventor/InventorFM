@@ -1,7 +1,8 @@
 -- ═══════════════════════════════════════════════════════════════
---  Smart Pantry Pro — schema database
+--  Smart Pantry Pro — schema database (v2)
 --  Incolla tutto in Supabase → SQL Editor → New query → Run.
---  Si può rieseguire senza problemi (non cancella i dati).
+--  Si può rieseguire quante volte vuoi: NON cancella i dati,
+--  aggiunge solo ciò che manca (aggiorna anche la versione 1).
 -- ═══════════════════════════════════════════════════════════════
 
 -- Prodotti (un prodotto può avere più lotti con scadenze diverse)
@@ -48,12 +49,23 @@ create table if not exists public.shopping (
   done        boolean not null default false,
   created_at  timestamptz not null default now()
 );
+-- v2: quantità, unità e categoria nella lista della spesa
+alter table public.shopping add column if not exists qty      numeric;
+alter table public.shopping add column if not exists unit     text;
+alter table public.shopping add column if not exists category text;
+
+-- v2: link segreto per la sezione Mother (lista visibile senza login)
+create table if not exists public.share_links (
+  user_id     uuid primary key default auth.uid() references auth.users (id) on delete cascade,
+  token       uuid not null unique default gen_random_uuid(),
+  created_at  timestamptz not null default now()
+);
 
 -- ── Sicurezza: ogni utente vede e modifica SOLO le proprie righe ──
 do $$
 declare t text;
 begin
-  foreach t in array array['products', 'lots', 'usage_log', 'shopping'] loop
+  foreach t in array array['products', 'lots', 'usage_log', 'shopping', 'share_links'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('drop policy if exists "solo i miei dati" on public.%I', t);
     execute format(
@@ -62,5 +74,44 @@ begin
          with check (user_id = (select auth.uid()))', t);
     execute format('grant select, insert, update, delete on public.%I to authenticated', t);
     execute format('revoke all on public.%I from anon', t);
+  end loop;
+end $$;
+
+-- ── Funzioni per la pagina Mother ──
+-- Chi ha il link (token) può SOLO leggere la lista della spesa e spuntare "preso".
+-- Non vede la dispensa e non può modificare nient'altro.
+create or replace function public.mother_list(p_token uuid)
+returns table (id uuid, name text, qty numeric, unit text, category text,
+               note text, done boolean, created_at timestamptz)
+language sql stable security definer set search_path = public as $$
+  select s.id, s.name, s.qty, s.unit, s.category, s.note, s.done, s.created_at
+  from public.shopping s
+  join public.share_links l on l.user_id = s.user_id
+  where l.token = p_token
+  order by s.created_at;
+$$;
+
+create or replace function public.mother_toggle(p_token uuid, p_id uuid, p_done boolean)
+returns void
+language sql security definer set search_path = public as $$
+  update public.shopping s set done = p_done
+  from public.share_links l
+  where l.token = p_token and l.user_id = s.user_id and s.id = p_id;
+$$;
+
+revoke all on function public.mother_list(uuid) from public;
+revoke all on function public.mother_toggle(uuid, uuid, boolean) from public;
+grant execute on function public.mother_list(uuid) to anon, authenticated;
+grant execute on function public.mother_toggle(uuid, uuid, boolean) to anon, authenticated;
+
+-- ── Aggiornamenti in tempo reale (Realtime) ──
+do $$
+declare t text;
+begin
+  foreach t in array array['products', 'lots', 'usage_log', 'shopping'] loop
+    begin
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    exception when others then null; -- già presente o Realtime non disponibile
+    end;
   end loop;
 end $$;
